@@ -2,7 +2,10 @@
 .idea
 logs
 victorialogs/data
+loki/data
+elk/data
 monitoring/data
 shared/go_generator/go.sum
 shared/go_generator/go_generator
 shared/go_generator/log_generator
+shared/go_generator/log-generator

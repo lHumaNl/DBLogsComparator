@@ -1,5 +1,8 @@
 version: '3.8'
 
+volumes:
+  victorialogs-data:
+
 services:
   # VictoriaLogs для хранения логов
   victorialogs:
@@ -8,7 +11,7 @@ services:
     ports:
       - "9428:9428"
     volumes:
-      - ${VICTORIALOGS_DATA_DIR}:/victoria-logs-data
+      - ${VICTORIALOGS_DATA_DIR:-victorialogs-data}:/victoria-logs-data
     command:
       - "--storageDataPath=/victoria-logs-data"
       - "--retentionPeriod=${VICTORIALOGS_RETENTION_PERIOD}"

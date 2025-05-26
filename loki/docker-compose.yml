@@ -1,0 +1,32 @@
+version: '3.8'
+
+networks:
+  monitoring-network:
+    external: true
+  loki-network:
+    driver: bridge
+
+volumes:
+  loki-data:
+
+services:
+  loki:
+    image: grafana/loki:${LOKI_VERSION}
+    container_name: loki
+    ports:
+      - "${LOKI_PORT}:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    environment:
+      - STRUCTURED_METADATA=${STRUCTURED_METADATA:-true}
+    volumes:
+      - ./config/loki-config.yaml:/etc/loki/local-config.yaml
+      - ${LOKI_DATA_DIR:-loki-data}:/loki
+    networks:
+      - loki-network
+      - monitoring-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5

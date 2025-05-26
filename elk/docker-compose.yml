@@ -1,0 +1,63 @@
+version: '3.8'
+
+networks:
+  monitoring-network:
+    external: true
+  elk-network:
+    driver: bridge
+
+volumes:
+  elasticsearch-data:
+  kibana-data:
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ES_VERSION}
+    container_name: elasticsearch
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=es-docker-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
+      - xpack.security.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ${ES_DATA_DIR:-elasticsearch-data}:/usr/share/elasticsearch/data
+    ports:
+      - "${ES_PORT}:9200"
+      - "9300:9300"
+    networks:
+      - elk-network
+      - monitoring-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ES_VERSION}
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    ports:
+      - "${KIBANA_PORT}:5601"
+    volumes:
+      - ${KIBANA_DATA_DIR:-kibana-data}:/usr/share/kibana/data
+    networks:
+      - elk-network
+      - monitoring-network
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped

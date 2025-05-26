@@ -10,13 +10,13 @@ volumes:
 
 services:
   victoria-metrics:
-    image: victoriametrics/victoria-metrics:v1.91.3
+    image: victoriametrics/victoria-metrics:${VICTORIA_METRICS_VERSION}
     container_name: victoria-metrics
     ports:
-      - "8428:8428"
+      - "${VICTORIA_METRICS_PORT}:8428"
     volumes:
       - ./config/victoria-metrics/victoria-metrics.yaml:/victoria-metrics.yaml
-      - vm-data:/victoria-metrics-data
+      - ${VM_DATA_DIR:-vm-data}:/victoria-metrics-data
     command:
       - "--promscrape.config=/victoria-metrics.yaml"
       - "--promscrape.config.strictParse=false"
@@ -26,13 +26,13 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:9.5.2
+    image: grafana/grafana:${GRAFANA_VERSION}
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT}:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-image-renderer
       - GF_RENDERING_SERVER_URL=http://renderer:8081/render
@@ -41,7 +41,7 @@ services:
     volumes:
       - ./config/grafana/provisioning:/etc/grafana/provisioning
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards
-      - grafana-data:/var/lib/grafana
+      - ${GRAFANA_DATA_DIR:-grafana-data}:/var/lib/grafana
     networks:
       - monitoring-network
     depends_on:
@@ -49,13 +49,13 @@ services:
     restart: unless-stopped
 
   renderer:
-    image: grafana/grafana-image-renderer:latest
+    image: grafana/grafana-image-renderer:${RENDERER_VERSION}
     container_name: grafana-renderer
     ports:
-      - "8081:8081"
+      - "${RENDERER_PORT}:8081"
     environment:
-      - ENABLE_METRICS=true
-      - IGNORE_HTTPS_ERRORS=true
+      - ENABLE_METRICS=${RENDERER_ENABLE_METRICS}
+      - IGNORE_HTTPS_ERRORS=${RENDERER_IGNORE_HTTPS_ERRORS}
     networks:
       - monitoring-network
     restart: unless-stopped
