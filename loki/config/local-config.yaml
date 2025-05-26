@@ -1,0 +1,76 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+ingester:
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+  wal:
+    enabled: true
+    dir: /loki/wal
+  chunk_idle_period: 1h
+  chunk_retain_period: 30s
+  chunk_encoding: snappy
+  max_chunk_age: 1h
+
+distributor:
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2023-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+  filesystem:
+    directory: /loki/chunks
+
+compactor:
+  working_directory: /loki/retention
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  max_compaction_parallelism: 1
+  delete_request_cancel_period: 24h
+  delete_request_store: filesystem
+
+limits_config:
+  ingestion_rate_mb: ${INGESTION_RATE_MB}
+  ingestion_burst_size_mb: ${INGESTION_BURST_SIZE_MB}
+  max_entries_limit_per_query: ${MAX_ENTRIES_LIMIT_PER_QUERY}
+  allow_structured_metadata: ${STRUCTURED_METADATA}
+  max_concurrent_tail_requests: ${LOKI_MAX_CONCURRENT_QUERIES}
+  max_global_streams_per_user: ${LOKI_MAX_STREAMS}
+  max_chunks_per_query: ${LOKI_MAX_CHUNKS_PER_QUERY}
+  retention_period: ${LOKI_RETENTION_PERIOD}
+  max_cache_freshness_per_query: 10m
+  cardinality_limit: 100000
+
+# Настройка параллелизма запросов
+querier:
+  max_concurrent: ${LOKI_MAX_CONCURRENT_QUERIES}
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: true

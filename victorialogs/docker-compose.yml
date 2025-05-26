@@ -4,30 +4,35 @@ volumes:
   victorialogs-data:
 
 services:
-  # VictoriaLogs для хранения логов
   victorialogs:
     image: victoriametrics/victoria-logs:${VICTORIALOGS_VERSION}
     container_name: victorialogs
     ports:
-      - "9428:9428"
+      - "${VICTORIALOGS_PORT}:9428"
     volumes:
       - ${VICTORIALOGS_DATA_DIR:-victorialogs-data}:/victoria-logs-data
     command:
       - "--storageDataPath=/victoria-logs-data"
       - "--retentionPeriod=${VICTORIALOGS_RETENTION_PERIOD}"
-      - "-retention.maxDiskSpaceUsageBytes=${VICTORIALOGS_MAX_DISK_SIZE}"
+      - "--retention.maxDiskSpaceUsageBytes=${VICTORIALOGS_MAX_DISK_SIZE}"
       - "--loggerLevel=${VICTORIALOGS_LOG_LEVEL}"
       - "--httpListenAddr=:9428"
-    deploy:
-      resources:
-        limits:
-          cpus: '${VICTORIALOGS_CPU_LIMIT}'
-          memory: ${VICTORIALOGS_MEMORY_LIMIT}
+      - "--memory.allowedBytes=${VICTORIALOGS_MEMORY_ALLOWED_BYTES}"
+      - "--search.maxConcurrentRequests=${VICTORIALOGS_MAX_CONCURRENT_REQUESTS}"
+    environment:
+      - GOMAXPROCS=${VICTORIALOGS_GO_MAX_PROCS}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
     networks:
       - victorialogs
       - monitoring-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9428/health", "||", "exit", "1"]
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:9428/health", "||", "exit", "1" ]
       interval: 10s
       timeout: 5s
       retries: 3

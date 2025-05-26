@@ -16,15 +16,23 @@ services:
     container_name: elasticsearch
     environment:
       - node.name=elasticsearch
-      - cluster.name=es-docker-cluster
+      - cluster.name=es-cluster
       - discovery.type=single-node
       - bootstrap.memory_lock=true
       - ES_JAVA_OPTS=${ES_JAVA_OPTS}
       - xpack.security.enabled=false
+      - processors=${ES_PROCESSORS:-2}
+      - cluster.routing.allocation.disk.threshold_enabled=${ES_DISK_THRESHOLD_ENABLED:-true}
+      - cluster.routing.allocation.disk.watermark.low=${ES_DISK_WATERMARK_LOW_GB:-20}gb
+      - cluster.routing.allocation.disk.watermark.high=${ES_DISK_WATERMARK_HIGH_GB:-10}gb
+      - cluster.routing.allocation.disk.watermark.flood_stage=${ES_DISK_WATERMARK_FLOOD_GB:-5}gb
     ulimits:
       memlock:
         soft: -1
         hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - ${ES_DATA_DIR:-elasticsearch-data}:/usr/share/elasticsearch/data
     ports:
@@ -34,7 +42,7 @@ services:
       - elk-network
       - monitoring-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9200" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -57,6 +65,27 @@ services:
       - elasticsearch
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:latest
+    container_name: elasticsearch-exporter
+    command:
+      - '--es.uri=http://elasticsearch:9200'
+      - '--es.timeout=30s'
+      - '--es.all'
+    ports:
+      - "9114:9114"
+    networks:
+      - elk-network
+      - monitoring-network
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9114/metrics"]
       interval: 30s
       timeout: 10s
       retries: 5

@@ -23,6 +23,11 @@ services:
       - "--storageDataPath=/victoria-metrics-data"
     networks:
       - monitoring-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8428/-/healthy", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     restart: unless-stopped
 
   grafana:
@@ -46,6 +51,11 @@ services:
       - monitoring-network
     depends_on:
       - victoria-metrics
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     restart: unless-stopped
 
   renderer:

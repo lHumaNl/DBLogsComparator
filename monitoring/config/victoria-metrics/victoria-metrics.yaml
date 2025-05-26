@@ -23,3 +23,20 @@ scrape_configs:
           instance: 'victorialogs'
           service: 'log-storage'
           environment: 'development'
+
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+        labels:
+          instance: 'loki'
+          service: 'log-storage'
+          environment: 'development'
+    metrics_path: '/metrics'
+
+  - job_name: 'elasticsearch-exporter'
+    static_configs:
+      - targets: ['elasticsearch-exporter:9114']
+        labels:
+          instance: 'elasticsearch'
+          service: 'log-storage'
+          environment: 'development'
