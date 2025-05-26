@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'victoria-metrics'
+    static_configs:
+      - targets: ['victoria-metrics:8428']
+        labels:
+          instance: 'victoria-metrics'
+
+  - job_name: 'log-generators'
+    static_configs:
+      - targets: ['go-log-generator:9090']
+        labels:
+          instance: 'go-log-generator'
+          service: 'log-generator'
+          environment: 'development'
+
+  - job_name: 'victorialogs'
+    static_configs:
+      - targets: ['victorialogs:9428']
+        labels:
+          instance: 'victorialogs'
+          service: 'log-storage'
+          environment: 'development'

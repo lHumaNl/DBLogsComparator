@@ -1,0 +1,61 @@
+version: '3.8'
+
+networks:
+  monitoring-network:
+    external: true
+
+volumes:
+  vm-data:
+  grafana-data:
+
+services:
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.91.3
+    container_name: victoria-metrics
+    ports:
+      - "8428:8428"
+    volumes:
+      - ./config/victoria-metrics/victoria-metrics.yaml:/victoria-metrics.yaml
+      - vm-data:/victoria-metrics-data
+    command:
+      - "--promscrape.config=/victoria-metrics.yaml"
+      - "--promscrape.config.strictParse=false"
+      - "--storageDataPath=/victoria-metrics-data"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:9.5.2
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-image-renderer
+      - GF_RENDERING_SERVER_URL=http://renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
+      - GF_LOG_FILTERS=rendering:debug
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
+    networks:
+      - monitoring-network
+    depends_on:
+      - victoria-metrics
+    restart: unless-stopped
+
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+    container_name: grafana-renderer
+    ports:
+      - "8081:8081"
+    environment:
+      - ENABLE_METRICS=true
+      - IGNORE_HTTPS_ERRORS=true
+    networks:
+      - monitoring-network
+    restart: unless-stopped

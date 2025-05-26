@@ -1,0 +1,8 @@
+.venv
+.idea
+logs
+victorialogs/data
+monitoring/data
+shared/go_generator/go.sum
+shared/go_generator/go_generator
+shared/go_generator/log_generator

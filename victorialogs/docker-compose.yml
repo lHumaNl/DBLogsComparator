@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # VictoriaLogs для хранения логов
+  victorialogs:
+    image: victoriametrics/victoria-logs:${VICTORIALOGS_VERSION}
+    container_name: victorialogs
+    ports:
+      - "9428:9428"
+    volumes:
+      - ${VICTORIALOGS_DATA_DIR}:/victoria-logs-data
+    command:
+      - "--storageDataPath=/victoria-logs-data"
+      - "--retentionPeriod=${VICTORIALOGS_RETENTION_PERIOD}"
+      - "-retention.maxDiskSpaceUsageBytes=${VICTORIALOGS_MAX_DISK_SIZE}"
+      - "--loggerLevel=${VICTORIALOGS_LOG_LEVEL}"
+      - "--httpListenAddr=:9428"
+    deploy:
+      resources:
+        limits:
+          cpus: '${VICTORIALOGS_CPU_LIMIT}'
+          memory: ${VICTORIALOGS_MEMORY_LIMIT}
+    networks:
+      - victorialogs
+      - monitoring-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9428/health", "||", "exit", "1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  victorialogs:
+    driver: bridge
+  monitoring-network:
+    external: true
