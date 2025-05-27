@@ -4,10 +4,6 @@ networks:
   monitoring-network:
     external: true
 
-volumes:
-  vm-data:
-  grafana-data:
-
 services:
   victoria-metrics:
     image: victoriametrics/victoria-metrics:${VICTORIA_METRICS_VERSION}
@@ -16,7 +12,12 @@ services:
       - "${VICTORIA_METRICS_PORT}:8428"
     volumes:
       - ./config/victoria-metrics/victoria-metrics.yaml:/victoria-metrics.yaml
-      - ${VM_DATA_DIR:-vm-data}:/victoria-metrics-data
+      #- ${VM_DATA_DIR}
+    deploy:
+      resources:
+        limits:
+          cpus: ${VM_CPU_LIMIT}
+          memory: ${VM_MEMORY_LIMIT}
     command:
       - "--promscrape.config=/victoria-metrics.yaml"
       - "--promscrape.config.strictParse=false"
@@ -24,10 +25,11 @@ services:
     networks:
       - monitoring-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8428/-/healthy"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8428/-/healthy" ]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   grafana:
@@ -35,6 +37,11 @@ services:
     container_name: grafana
     ports:
       - "${GRAFANA_PORT}:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: ${GRAFANA_CPU_LIMIT}
+          memory: ${GRAFANA_MEMORY_LIMIT}
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
@@ -46,16 +53,17 @@ services:
     volumes:
       - ./config/grafana/provisioning:/etc/grafana/provisioning
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards
-      - ${GRAFANA_DATA_DIR:-grafana-data}:/var/lib/grafana
+      #- ${GRAFANA_DATA_DIR}
     networks:
       - monitoring-network
     depends_on:
       - victoria-metrics
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:3000/api/health" ]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   renderer:
@@ -63,6 +71,11 @@ services:
     container_name: grafana-renderer
     ports:
       - "${RENDERER_PORT}:8081"
+    deploy:
+      resources:
+        limits:
+          cpus: ${RENDERER_CPU_LIMIT}
+          memory: ${RENDERER_MEMORY_LIMIT}
     environment:
       - ENABLE_METRICS=${RENDERER_ENABLE_METRICS}
       - IGNORE_HTTPS_ERRORS=${RENDERER_IGNORE_HTTPS_ERRORS}

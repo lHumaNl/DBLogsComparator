@@ -55,7 +55,7 @@ func main() {
 	retryDelay := flag.Duration("retry-delay", 500*time.Millisecond, "Задержка между повторными попытками")
 
 	enableMetrics := flag.Bool("enable-metrics", false, "Включить метрики Prometheus")
-	metricsPort := flag.Int("metrics-port", 8080, "Порт для метрик Prometheus")
+	metricsPort := flag.Int("metrics-port", 9090, "Порт для метрик Prometheus")
 
 	flag.Parse()
 

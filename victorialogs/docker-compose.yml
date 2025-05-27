@@ -1,16 +1,18 @@
 version: '3.8'
 
-volumes:
-  victorialogs-data:
-
 services:
   victorialogs:
     image: victoriametrics/victoria-logs:${VICTORIALOGS_VERSION}
     container_name: victorialogs
     ports:
       - "${VICTORIALOGS_PORT}:9428"
-    volumes:
-      - ${VICTORIALOGS_DATA_DIR:-victorialogs-data}:/victoria-logs-data
+    #volumes:
+    #  - ${VICTORIALOGS_DATA_DIR}
+    deploy:
+      resources:
+        limits:
+          cpus: ${VICTORIALOGS_CPU_LIMIT}
+          memory: ${VICTORIALOGS_MEMORY_LIMIT}
     command:
       - "--storageDataPath=/victoria-logs-data"
       - "--retentionPeriod=${VICTORIALOGS_RETENTION_PERIOD}"
@@ -19,8 +21,6 @@ services:
       - "--httpListenAddr=:9428"
       - "--memory.allowedBytes=${VICTORIALOGS_MEMORY_ALLOWED_BYTES}"
       - "--search.maxConcurrentRequests=${VICTORIALOGS_MAX_CONCURRENT_REQUESTS}"
-    environment:
-      - GOMAXPROCS=${VICTORIALOGS_GO_MAX_PROCS}
     ulimits:
       memlock:
         soft: -1
@@ -32,7 +32,7 @@ services:
       - victorialogs
       - monitoring-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:9428/health"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:9428/health" ]
       interval: 10s
       timeout: 5s
       retries: 3

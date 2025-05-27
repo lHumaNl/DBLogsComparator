@@ -6,32 +6,29 @@ networks:
   loki-network:
     driver: bridge
 
-volumes:
-  loki-data:
-
 services:
   loki:
     image: grafana/loki:${LOKI_VERSION}
     container_name: loki
     ports:
       - "${LOKI_PORT}:3100"
-    command: -config.file=/etc/loki/local-config.yaml -config.expand-env=true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: ${LOKI_CPU_LIMIT}
+          memory: ${LOKI_MEMORY_LIMIT}
     environment:
       - STRUCTURED_METADATA=${STRUCTURED_METADATA:-true}
       - INGESTION_RATE_MB=${INGESTION_RATE_MB:-16}
       - INGESTION_BURST_SIZE_MB=${INGESTION_BURST_SIZE_MB:-32}
       - MAX_ENTRIES_LIMIT_PER_QUERY=${MAX_ENTRIES_LIMIT_PER_QUERY:-1000000}
-      - GOMAXPROCS=${LOKI_GO_MAX_PROCS:-2}
       - LOKI_MAX_CONCURRENT_QUERIES=${LOKI_MAX_CONCURRENT_QUERIES:-2}
       - LOKI_QUERY_PARALLELISM=${LOKI_QUERY_PARALLELISM:-2}
       - LOKI_MAX_STREAMS=${LOKI_MAX_STREAMS:-5000}
       - LOKI_MAX_CHUNKS_PER_QUERY=${LOKI_MAX_CHUNKS_PER_QUERY:-1000000}
-      - LOKI_RETENTION_PERIOD=${LOKI_RETENTION_PERIOD:-168h}
+      - LOKI_RETENTION_PERIOD=${LOKI_RETENTION_PERIOD:-72h}
       - LOKI_MAX_DISK_SIZE=${LOKI_MAX_DISK_SIZE:-10GB}
-    deploy:
-      resources:
-        limits:
-          memory: ${LOKI_MEMORY_LIMIT:-4096MB}
     ulimits:
       memlock:
         soft: -1
@@ -41,13 +38,13 @@ services:
         hard: 65536
     volumes:
       - ./config/local-config.yaml:/etc/loki/local-config.yaml:ro
-      - ${LOKI_DATA_DIR:-loki-data}:/loki
+      #- ${LOKI_DATA_DIR}
     networks:
       - loki-network
       - monitoring-network
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 5
+    command: -config.file=/etc/loki/local-config.yaml -config.expand-env=true
