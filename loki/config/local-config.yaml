@@ -8,6 +8,7 @@ ingester:
     ring:
       kvstore:
         store: inmemory
+      replication_factor: 1
   wal:
     enabled: true
     dir: /loki/wal
@@ -60,7 +61,6 @@ limits_config:
   max_cache_freshness_per_query: 10m
   cardinality_limit: 100000
 
-# Настройка параллелизма запросов
 querier:
   max_concurrent: ${LOKI_MAX_CONCURRENT_QUERIES}
 

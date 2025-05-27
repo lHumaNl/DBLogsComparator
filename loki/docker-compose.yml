@@ -41,7 +41,6 @@ services:
         hard: 65536
     volumes:
       - ./config/local-config.yaml:/etc/loki/local-config.yaml:ro
-      - ./config/runtime-config.yaml:/etc/loki/runtime-config.yaml:ro
       - ${LOKI_DATA_DIR:-loki-data}:/loki
     networks:
       - loki-network

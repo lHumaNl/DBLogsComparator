@@ -41,13 +41,85 @@ func NewElasticsearchDB(baseURL string, options Options) (*ElasticsearchDB, erro
 	// Если URL не заканчивается на /_bulk, добавляем его
 	if !strings.HasSuffix(db.URL, "/_bulk") {
 		if strings.HasSuffix(db.URL, "/") {
-			db.URL += "_bulk"
+			db.URL = db.URL + "_bulk"
 		} else {
-			db.URL += "/_bulk"
+			db.URL = db.URL + "/_bulk"
 		}
 	}
 	
+	// Создаем индекс с правильным маппингом, если его еще нет
+	err := db.createIndexWithMapping()
+	if err != nil && db.Verbose {
+		fmt.Printf("Предупреждение: не удалось создать индекс с маппингом: %v\n", err)
+	}
+	
 	return db, nil
+}
+
+// createIndexWithMapping создает индекс с нужным маппингом полей
+func (db *ElasticsearchDB) createIndexWithMapping() error {
+	currentIndex := db.getCurrentIndex()
+	
+	// Проверяем, существует ли индекс
+	checkURL := strings.TrimSuffix(db.URL, "/_bulk") + "/" + currentIndex
+	req, err := http.NewRequest("HEAD", checkURL, nil)
+	if err != nil {
+		return err
+	}
+	
+	resp, err := db.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	
+	// Если индекс уже существует, ничего не делаем
+	if resp.StatusCode == 200 {
+		return nil
+	}
+	
+	// Создаем индекс с нужным маппингом
+	createURL := strings.TrimSuffix(db.URL, "/_bulk") + "/" + currentIndex
+	
+	// Определяем маппинг для полей
+	mapping := `{
+		"mappings": {
+			"properties": {
+				"@timestamp": { "type": "date" },
+				"timestamp": { "type": "date" },
+				"message": { "type": "text" },
+				"level": { "type": "keyword" },
+				"log_type": { "type": "keyword" },
+				"host": { "type": "keyword" },
+				"service": { "type": "keyword" },
+				"container_name": { "type": "keyword" },
+				"metric_name": { "type": "keyword" },
+				"event_type": { "type": "keyword" },
+				"status": { "type": "keyword" },
+				"request_method": { "type": "keyword" },
+				"error_code": { "type": "keyword" }
+			}
+		}
+	}`
+	
+	createReq, err := http.NewRequest("PUT", createURL, strings.NewReader(mapping))
+	if err != nil {
+		return err
+	}
+	
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := db.httpClient.Do(createReq)
+	if err != nil {
+		return err
+	}
+	defer createResp.Body.Close()
+	
+	if createResp.StatusCode >= 400 {
+		body, _ := io.ReadAll(createResp.Body)
+		return fmt.Errorf("ошибка создания индекса: код %d, ответ: %s", createResp.StatusCode, body)
+	}
+	
+	return nil
 }
 
 // Initialize инициализирует соединение с Elasticsearch
@@ -105,8 +177,70 @@ func (db *ElasticsearchDB) FormatPayload(logs []LogEntry) (string, string) {
 	// 2. Данные документа
 	for _, log := range logs {
 		// Убедимся, что timestamp в правильном формате
-		if _, ok := log["timestamp"]; !ok {
-			log["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+		var timestampStr string
+		if ts, ok := log["timestamp"]; ok {
+			if tsStr, ok := ts.(string); ok {
+				timestampStr = tsStr
+				if tsStr == "0" || tsStr == "" {
+					timestampStr = time.Now().UTC().Format(time.RFC3339Nano)
+				}
+			} else {
+				timestampStr = time.Now().UTC().Format(time.RFC3339Nano)
+			}
+		} else {
+			timestampStr = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		
+		// Преобразуем timestamp в формат, ожидаемый Kibana (strict_date_optional_time)
+		if t, err := time.Parse(time.RFC3339Nano, timestampStr); err == nil {
+			// Используем формат "yyyy-MM-dd'T'HH:mm:ss.SSSZ" для Elasticsearch
+			timestampStr = t.Format("2006-01-02T15:04:05.000Z07:00")
+		}
+		
+		// Устанавливаем поля timestamp и @timestamp
+		log["timestamp"] = timestampStr
+		log["@timestamp"] = timestampStr
+		
+		// Добавляем поле level для всех типов логов, если его нет
+		if _, ok := log["level"]; !ok {
+			// В зависимости от типа лога выбираем подходящий уровень
+			logType, _ := log["log_type"].(string)
+			switch logType {
+			case "web_access":
+				// Для web_access используем info для нормальных запросов и warn/error для ошибок
+				if status, ok := log["status"].(float64); ok {
+					if status >= 500 {
+						log["level"] = "error"
+					} else if status >= 400 {
+						log["level"] = "warn"
+					} else {
+						log["level"] = "info"
+					}
+				} else {
+					log["level"] = "info"
+				}
+			case "metric":
+				// Для метрик используем info
+				log["level"] = "info"
+			case "event":
+				// Для событий используем info или warn в зависимости от типа события
+				if eventType, ok := log["event_type"].(string); ok && (strings.Contains(eventType, "error") || strings.Contains(eventType, "fail")) {
+					log["level"] = "warn"
+				} else {
+					log["level"] = "info"
+				}
+			default:
+				// По умолчанию используем info
+				log["level"] = "info"
+			}
+		}
+		
+		// Убедимся что все строковые поля представлены как keyword для фильтрации
+		// Преобразуем level в строку если это не строка
+		if level, ok := log["level"]; ok {
+			if _, ok := level.(string); !ok {
+				log["level"] = fmt.Sprintf("%v", level)
+			}
 		}
 		
 		// Метаданные - операция index в указанный индекс

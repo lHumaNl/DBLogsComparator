@@ -20,6 +20,20 @@ type VictoriaLogsDB struct {
 
 // NewVictoriaLogsDB создает новый экземпляр VictoriaLogsDB
 func NewVictoriaLogsDB(baseURL string, options Options) (*VictoriaLogsDB, error) {
+	// Проверяем и добавляем путь /insert/jsonline к URL, если его еще нет
+	if !strings.Contains(baseURL, "/insert/jsonline") {
+		baseURL = strings.TrimRight(baseURL, "/") + "/insert/jsonline"
+	}
+	
+	// Добавляем необходимые параметры для корректной индексации логов
+	if !strings.Contains(baseURL, "?") {
+		baseURL += "?"
+	} else {
+		baseURL += "&"
+	}
+	// Указываем все необходимые параметры для правильной индексации
+	baseURL += "_time_field=timestamp&_msg_field=message&_stream_fields=log_type,service,host"
+	
 	base := NewBaseLogDB(baseURL, options)
 	
 	db := &VictoriaLogsDB{
@@ -72,9 +86,19 @@ func (db *VictoriaLogsDB) FormatPayload(logs []LogEntry) (string, string) {
 	
 	// Для VictoriaLogs каждый лог должен быть на отдельной строке (NDJSON)
 	for i, log := range logs {
-		// Убедимся, что timestamp в правильном формате
+		// Убедимся, что timestamp в правильном формате ISO8601
 		if _, ok := log["timestamp"]; !ok {
 			log["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+		} else if ts, ok := log["timestamp"].(string); ok {
+			// Преобразуем timestamp в правильный формат, если нужно
+			if ts == "0" || ts == "" {
+				log["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+			}
+		}
+		
+		// Убедимся, что message существует
+		if _, ok := log["message"]; !ok {
+			log["message"] = fmt.Sprintf("Log message for %s", log["log_type"])
 		}
 		
 		logJSON, err := json.Marshal(log)
@@ -88,8 +112,8 @@ func (db *VictoriaLogsDB) FormatPayload(logs []LogEntry) (string, string) {
 		}
 	}
 	
-	// Для VictoriaLogs используем content-type application/x-ndjson
-	return buf.String(), "application/x-ndjson"
+	// Для VictoriaLogs используем content-type application/stream+json
+	return buf.String(), "application/stream+json"
 }
 
 // SendLogs отправляет пакет логов в VictoriaLogs

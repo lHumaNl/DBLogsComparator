@@ -6,16 +6,16 @@ networks:
 
 services:
   go-log-generator:
-    image: golang:1.21-alpine
+    image: golang:1.22-alpine
     container_name: go-log-generator
     working_dir: /app
     volumes:
       - .:/app
-    command: sh -c "go build -o go_generator main.go && ./go_generator -mode=${GENERATOR_MODE} -url='${GENERATOR_URL}' -rps=${GENERATOR_RPS} -duration=${GENERATOR_DURATION} -bulk-size=${GENERATOR_BULK_SIZE} -workers=${GENERATOR_WORKERS} -connections=${GENERATOR_CONNECTIONS} -max-retries=${GENERATOR_MAX_RETRIES} -retry-delay=${GENERATOR_RETRY_DELAY} -enable-metrics=${GENERATOR_METRICS_ENABLED} -metrics-port=${GENERATOR_METRICS_PORT} -verbose=${GENERATOR_VERBOSE} -log-distribution-web-access=${GENERATOR_LOG_DISTRIBUTION_WEB_ACCESS} -log-distribution-web-error=${GENERATOR_LOG_DISTRIBUTION_WEB_ERROR} -log-distribution-application=${GENERATOR_LOG_DISTRIBUTION_APPLICATION} -log-distribution-metric=${GENERATOR_LOG_DISTRIBUTION_METRIC} -log-distribution-event=${GENERATOR_LOG_DISTRIBUTION_EVENT}"
+    command: sh -c "go build -o go_generator main.go && ./go_generator -mode=${GENERATOR_MODE} -url='${GENERATOR_URL}' -rps=${GENERATOR_RPS} -duration=${GENERATOR_DURATION} -bulk-size=${GENERATOR_BULK_SIZE} -worker-count=${GENERATOR_WORKERS} -connection-count=${GENERATOR_CONNECTIONS} -max-retries=${GENERATOR_MAX_RETRIES} -retry-delay=${GENERATOR_RETRY_DELAY} -enable-metrics=${GENERATOR_METRICS_ENABLED} -metrics-port=${GENERATOR_METRICS_PORT} -verbose=${GENERATOR_VERBOSE} -web-access-weight=${GENERATOR_LOG_DISTRIBUTION_WEB_ACCESS} -web-error-weight=${GENERATOR_LOG_DISTRIBUTION_WEB_ERROR} -application-weight=${GENERATOR_LOG_DISTRIBUTION_APPLICATION} -metric-weight=${GENERATOR_LOG_DISTRIBUTION_METRIC} -event-weight=${GENERATOR_LOG_DISTRIBUTION_EVENT}"
     ports:
       - "${GENERATOR_METRICS_PORT}:${GENERATOR_METRICS_PORT}"
     networks:
       - monitoring-network
     env_file:
       - .env
-    restart: unless-stopped
+    restart: "no"

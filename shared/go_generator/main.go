@@ -7,6 +7,8 @@ import (
 	"math/rand"
 	"runtime"
 	"time"
+	"os"
+	"strconv"
 
 	"github.com/dblogscomparator/log-generator/logdb"
 	"github.com/dblogscomparator/log-generator/pkg"
@@ -19,13 +21,26 @@ func main() {
 	// Инициализация генератора случайных чисел
 	rand.Seed(time.Now().UnixNano())
 
+	// Определение оптимального количества воркеров
+	// По умолчанию - количество доступных CPU * 2
+	cpuCount := runtime.NumCPU()
+	defaultWorkers := cpuCount * 2
+	
+	// Если установлен лимит CPU для контейнера, используем его
+	cpuLimit := os.Getenv("CPU_LIMIT")
+	if cpuLimit != "" {
+		if limit, err := strconv.ParseFloat(cpuLimit, 64); err == nil && limit > 0 {
+			defaultWorkers = int(limit * 2)
+		}
+	}
+
 	// Разбор аргументов командной строки
 	mode := flag.String("mode", "victoria", "Режим работы: victoria (VictoriaLogs), es (Elasticsearch), loki (Loki)")
 	baseURL := flag.String("url", "http://localhost:8428", "Базовый URL для отправки логов")
 	rps := flag.Int("rps", 10, "Количество запросов в секунду")
 	duration := flag.Duration("duration", 1*time.Minute, "Продолжительность теста")
 	bulkSize := flag.Int("bulk-size", 100, "Количество логов в одном запросе")
-	workerCount := flag.Int("worker-count", 5, "Количество рабочих горутин")
+	workerCount := flag.Int("worker-count", defaultWorkers, "Количество рабочих горутин")
 	connectionCount := flag.Int("connection-count", 10, "Количество HTTP-соединений")
 
 	// Распределение типов логов
