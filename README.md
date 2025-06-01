@@ -125,6 +125,71 @@ Pre-configured Grafana dashboards allow you to compare:
 - Storage efficiency
 - Log visualization and exploration
 
+## Management Scripts
+
+DBLogsComparator provides convenient shell scripts for managing and monitoring the system:
+
+### start_dbsystem.sh
+
+A universal script for managing log systems and the monitoring stack. It simplifies the process of starting, stopping, and checking the components.
+
+```bash
+./start_dbsystem.sh <log_system> [options]
+```
+
+**Log Systems:**
+- `monitoring` - Start only the monitoring system (VictoriaMetrics, Grafana, Grafana Renderer)
+- `elk` - Start ELK Stack (Elasticsearch + Kibana) and monitoring
+- `loki` - Start Loki and monitoring
+- `victorialogs` - Start VictoriaLogs and monitoring
+- `all` - Only available with `--down` option to stop all systems
+
+**Options:**
+- `--generator` - Start the log generator after starting the log systems
+- `--no-monitoring` - Don't start or check monitoring system (ignored with 'monitoring' log system)
+- `--down` - Stop the specified log system and its containers
+- `--help` - Show help information
+
+**Examples:**
+```bash
+./start_dbsystem.sh monitoring                  # Start only monitoring
+./start_dbsystem.sh elk                         # Start ELK Stack with monitoring
+./start_dbsystem.sh loki --generator            # Start Loki, monitoring, and log generator
+./start_dbsystem.sh victorialogs --no-monitoring  # Start VictoriaLogs without monitoring
+./start_dbsystem.sh elk --down                  # Stop ELK Stack but leave monitoring running
+./start_dbsystem.sh all --down                  # Stop all systems
+```
+
+### check_health.sh
+
+A comprehensive script for checking the health and operational status of all components in the system.
+
+```bash
+./check_health.sh [options]
+```
+
+**Options:**
+- `--all` - Check all systems (default if no options specified)
+- `--monitoring` - Check only the monitoring system
+- `--elk` - Check only the ELK Stack
+- `--loki` - Check only Loki
+- `--victorialogs` - Check only VictoriaLogs
+- `--generator` - Check only the log generator
+- `--help` - Show help information
+
+**Features:**
+- Container status verification
+- HTTP endpoint availability testing
+- Metrics export validation
+- Detailed status reporting with color-coded output
+- Automatic retry mechanism for transient failures
+
+**Example:**
+```bash
+./check_health.sh --all          # Check all systems
+./check_health.sh --elk          # Check only ELK Stack components
+```
+
 ## Key Features
 
 - **Centralized Monitoring**: All components are monitored through a unified Grafana/VictoriaMetrics setup
