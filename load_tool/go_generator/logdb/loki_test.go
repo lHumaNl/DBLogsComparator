@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TestNewLokiDB проверяет создание экземпляра LokiDB
+// TestNewLokiDB checks the creation of a LokiDB instance
 func TestNewLokiDB(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -50,23 +50,23 @@ func TestNewLokiDB(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, err := NewLokiDB(tt.baseURL, tt.options)
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewLokiDB() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				if db.URL != tt.wantURL {
 					t.Errorf("URL = %v, want %v", db.URL, tt.wantURL)
 				}
-				
-				// Проверяем, что HTTP-клиент создан
+
+				// Check that HTTP client is initialized
 				if db.httpClient == nil {
-					t.Errorf("httpClient не инициализирован")
+					t.Errorf("httpClient is not initialized")
 				}
-				
-				// Проверяем поля из Options
+
+				// Check fields from Options
 				if db.BatchSize != tt.options.BatchSize {
 					t.Errorf("BatchSize = %v, want %v", db.BatchSize, tt.options.BatchSize)
 				}
@@ -75,13 +75,13 @@ func TestNewLokiDB(t *testing.T) {
 	}
 }
 
-// TestLokiDBFormatPayload проверяет форматирование данных для отправки
+// TestLokiDBFormatPayload checks the formatting of data for sending
 func TestLokiDBFormatPayload(t *testing.T) {
 	db, _ := NewLokiDB("http://localhost:3100", Options{})
-	
+
 	timestamp := time.Now()
 	timestampStr := timestamp.Format(time.RFC3339)
-	
+
 	logs := []LogEntry{
 		{
 			"timestamp": timestampStr,
@@ -98,15 +98,15 @@ func TestLokiDBFormatPayload(t *testing.T) {
 			"log_type":  "web_error",
 		},
 	}
-	
+
 	payload, contentType := db.FormatPayload(logs)
-	
-	// Проверяем Content-Type
+
+	// Check Content-Type
 	if contentType != "application/json" {
 		t.Errorf("contentType = %v, want %v", contentType, "application/json")
 	}
-	
-	// Проверяем, что payload содержит структуру Loki
+
+	// Check that payload contains Loki structure
 	expectedParts := []string{
 		"streams",
 		"values",
@@ -116,44 +116,44 @@ func TestLokiDBFormatPayload(t *testing.T) {
 		"Test message 1",
 		"Test message 2",
 	}
-	
+
 	for _, part := range expectedParts {
 		if !strings.Contains(payload, part) {
-			t.Errorf("payload не содержит ожидаемую часть: %v", part)
+			t.Errorf("payload does not contain expected part: %v", part)
 		}
 	}
 }
 
-// TestLokiDBSendLogs проверяет отправку логов
+// TestLokiDBSendLogs checks sending logs
 func TestLokiDBSendLogs(t *testing.T) {
-	// Создаем экземпляр LokiDB с мок-клиентом
+	// Create LokiDB instance with mock client
 	db, _ := NewLokiDB("http://localhost:3100", Options{
 		RetryCount: 1,
 		RetryDelay: time.Millisecond * 10,
 	})
-	
-	// Тест 1: Успешная отправка
+
+	// Test 1: Successful sending
 	t.Run("Successful Send", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок
+		// Replace HTTP client with mock
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
-					// Проверяем URL запроса
+					// Check request URL
 					if req.URL.String() != db.URL {
-						t.Errorf("URL запроса = %v, ожидался %v", req.URL.String(), db.URL)
+						t.Errorf("Request URL = %v, expected %v", req.URL.String(), db.URL)
 					}
-					
-					// Проверяем метод запроса
+
+					// Check request method
 					if req.Method != "POST" {
-						t.Errorf("Метод запроса = %v, ожидался %v", req.Method, "POST")
+						t.Errorf("Request method = %v, expected %v", req.Method, "POST")
 					}
-					
-					// Проверяем Content-Type
+
+					// Check Content-Type
 					if req.Header.Get("Content-Type") != "application/json" {
-						t.Errorf("Content-Type = %v, ожидался %v", req.Header.Get("Content-Type"), "application/json")
+						t.Errorf("Content-Type = %v, expected %v", req.Header.Get("Content-Type"), "application/json")
 					}
-					
-					// Возвращаем успешный ответ
+
+					// Return successful response
 					return &http.Response{
 						StatusCode: 204,
 						Body:       io.NopCloser(bytes.NewBufferString("")),
@@ -162,8 +162,8 @@ func TestLokiDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": time.Now().Format(time.RFC3339),
@@ -172,19 +172,19 @@ func TestLokiDBSendLogs(t *testing.T) {
 				"log_type":  "web_access",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err != nil {
-			t.Errorf("SendLogs() error = %v, ожидался nil", err)
+			t.Errorf("SendLogs() error = %v, expected nil", err)
 		}
 	})
-	
-	// Тест 2: Ошибка отправки
+
+	// Test 2: Send error
 	t.Run("Failed Send", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок с ошибкой
+		// Replace HTTP client with mock with error
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
@@ -193,8 +193,8 @@ func TestLokiDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": time.Now().Format(time.RFC3339),
@@ -203,19 +203,19 @@ func TestLokiDBSendLogs(t *testing.T) {
 				"log_type":  "web_access",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err == nil {
-			t.Errorf("SendLogs() error = nil, ожидалась ошибка")
+			t.Errorf("SendLogs() error = nil, expected error")
 		}
 	})
-	
-	// Тест 3: Неуспешный статус ответа
+
+	// Test 3: Failed status response
 	t.Run("Failed Status", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок с ошибочным статусом
+		// Replace HTTP client with mock with failed status
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
@@ -227,8 +227,8 @@ func TestLokiDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": time.Now().Format(time.RFC3339),
@@ -237,42 +237,42 @@ func TestLokiDBSendLogs(t *testing.T) {
 				"log_type":  "web_access",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err == nil {
-			t.Errorf("SendLogs() error = nil, ожидалась ошибка")
+			t.Errorf("SendLogs() error = nil, expected error")
 		}
 	})
 }
 
-// TestLokiDBName проверяет метод Name
+// TestLokiDBName checks the Name method
 func TestLokiDBName(t *testing.T) {
 	db, _ := NewLokiDB("http://localhost:3100", Options{})
-	
+
 	name := db.Name()
 	expected := "Loki"
-	
+
 	if name != expected {
 		t.Errorf("Name() = %v, want %v", name, expected)
 	}
 }
 
-// TestLokiDBInitializeAndClose проверяет методы Initialize и Close
+// TestLokiDBInitializeAndClose checks the Initialize and Close methods
 func TestLokiDBInitializeAndClose(t *testing.T) {
 	db, _ := NewLokiDB("http://localhost:3100", Options{})
-	
-	// Initialize должен просто возвращать nil
+
+	// Initialize should simply return nil
 	err := db.Initialize()
 	if err != nil {
-		t.Errorf("Initialize() error = %v, ожидался nil", err)
+		t.Errorf("Initialize() error = %v, expected nil", err)
 	}
-	
-	// Close должен просто возвращать nil
+
+	// Close should simply return nil
 	err = db.Close()
 	if err != nil {
-		t.Errorf("Close() error = %v, ожидался nil", err)
+		t.Errorf("Close() error = %v, expected nil", err)
 	}
 }

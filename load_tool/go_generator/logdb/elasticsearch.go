@@ -173,7 +173,6 @@ func (db *ElasticsearchDB) Initialize() error {
 // Close closes connection to Elasticsearch
 func (db *ElasticsearchDB) Close() error {
 	// No need to close HTTP client explicitly
-	// Для HTTP-клиента не требуется явное закрытие
 	return nil
 }
 

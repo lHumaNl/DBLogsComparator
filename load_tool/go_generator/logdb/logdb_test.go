@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// MockHTTPClient - мок для HTTP-клиента, используемый в тестах
+// MockHTTPClient - mock for HTTP client used in tests
 type MockHTTPClient struct {
 	DoFunc func(req *http.Request) (*http.Response, error)
 }
@@ -15,7 +15,7 @@ func (m *MockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	return m.DoFunc(req)
 }
 
-// MockHTTPTransport - мок для транспорта HTTP-клиента
+// MockHTTPTransport - mock for HTTP client transport
 type MockHTTPTransport struct {
 	RoundTripFunc func(req *http.Request) (*http.Response, error)
 }
@@ -24,7 +24,7 @@ func (m *MockHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return m.RoundTripFunc(req)
 }
 
-// TestCreateLogDB проверяет создание экземпляров LogDB через фабричный метод
+// TestCreateLogDB checks the creation of LogDB instances through the factory method
 func TestCreateLogDB(t *testing.T) {
 	options := Options{
 		BatchSize:  100,
@@ -33,7 +33,7 @@ func TestCreateLogDB(t *testing.T) {
 		RetryDelay: time.Second,
 		Verbose:    true,
 	}
-	
+
 	tests := []struct {
 		name     string
 		mode     string
@@ -75,37 +75,37 @@ func TestCreateLogDB(t *testing.T) {
 			wantErr:  true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, err := CreateLogDB(tt.mode, tt.baseURL, tt.options)
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateLogDB() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				dbType := getDBType(db)
 				if dbType != tt.wantType {
 					t.Errorf("CreateLogDB() dbType = %v, want %v", dbType, tt.wantType)
 				}
-				
-				// Проверяем базовые методы
+
+				// Check basic methods
 				if db.Name() == "" {
-					t.Errorf("Name() вернул пустую строку")
+					t.Errorf("Name() returned an empty string")
 				}
-				
+
 				metrics := db.Metrics()
 				if metrics == nil {
-					t.Errorf("Metrics() вернул nil")
+					t.Errorf("Metrics() returned nil")
 				}
 			}
 		})
 	}
 }
 
-// TestBaseLogDB проверяет функциональность базового класса BaseLogDB
+// TestBaseLogDB checks the functionality of the BaseLogDB base class
 func TestBaseLogDB(t *testing.T) {
 	options := Options{
 		BatchSize:  200,
@@ -114,60 +114,60 @@ func TestBaseLogDB(t *testing.T) {
 		RetryDelay: time.Millisecond * 500,
 		Verbose:    true,
 	}
-	
+
 	url := "http://example.com/api"
-	
+
 	base := NewBaseLogDB(url, options)
-	
-	// Проверяем, что все поля установлены правильно
+
+	// Check that all fields are set correctly
 	if base.URL != url {
 		t.Errorf("URL = %v, want %v", base.URL, url)
 	}
-	
+
 	if base.BatchSize != options.BatchSize {
 		t.Errorf("BatchSize = %v, want %v", base.BatchSize, options.BatchSize)
 	}
-	
+
 	if base.Timeout != options.Timeout {
 		t.Errorf("Timeout = %v, want %v", base.Timeout, options.Timeout)
 	}
-	
+
 	if base.RetryCount != options.RetryCount {
 		t.Errorf("RetryCount = %v, want %v", base.RetryCount, options.RetryCount)
 	}
-	
+
 	if base.RetryDelay != options.RetryDelay {
 		t.Errorf("RetryDelay = %v, want %v", base.RetryDelay, options.RetryDelay)
 	}
-	
+
 	if base.Verbose != options.Verbose {
 		t.Errorf("Verbose = %v, want %v", base.Verbose, options.Verbose)
 	}
-	
-	// Проверяем, что MetricsData инициализирован
+
+	// Check that MetricsData is initialized
 	if base.MetricsData == nil {
-		t.Errorf("MetricsData не инициализирован")
+		t.Errorf("MetricsData is not initialized")
 	}
-	
-	// Проверяем метод Metrics()
+
+	// Check the Metrics() method
 	metrics := base.Metrics()
 	if metrics == nil {
-		t.Errorf("Metrics() вернул nil")
+		t.Errorf("Metrics() returned nil")
 	}
-	
-	// Изменяем метрику и проверяем, что изменения отражаются
+
+	// Change a metric and check that changes are reflected
 	base.MetricsData["test_metric"] = 42
 	if base.Metrics()["test_metric"] != 42 {
-		t.Errorf("Metrics() не отражает изменения в MetricsData")
+		t.Errorf("Metrics() does not reflect changes in MetricsData")
 	}
 }
 
-// getDBType возвращает строковое представление типа объекта
+// getDBType returns a string representation of the object type
 func getDBType(db interface{}) string {
 	if db == nil {
 		return ""
 	}
-	
+
 	switch db.(type) {
 	case *VictoriaLogsDB:
 		return "*logdb.VictoriaLogsDB"

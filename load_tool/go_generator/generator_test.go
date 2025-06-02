@@ -1,24 +1,25 @@
 package main
 
 import (
-	"encoding/json"
+	"flag"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/pkg"
 )
 
-// TestCmdLineArgs проверяет правильность разбора аргументов командной строки
+// TestCmdLineArgs checks the correct parsing of command line arguments
 func TestCmdLineArgs(t *testing.T) {
-	// Сохраняем оригинальные аргументы
+	// Save original arguments
 	originalArgs := os.Args
 	defer func() {
 		os.Args = originalArgs
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	}()
 
-	// Тест 1: Базовые аргументы
+	// Test 1: Basic arguments
 	os.Args = []string{
 		"log-generator",
 		"-mode", "es",
@@ -28,44 +29,44 @@ func TestCmdLineArgs(t *testing.T) {
 		"-worker-count", "4",
 	}
 
-	// Создаем новый FlagSet для тестов
+	// Create a new FlagSet for tests
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 
-	// Параметры для теста
-	mode := flag.String("mode", "victoria", "Режим работы")
-	rps := flag.Int("rps", 10, "Количество запросов в секунду")
-	duration := flag.Duration("duration", 1*time.Minute, "Продолжительность теста")
-	bulkSize := flag.Int("bulk-size", 100, "Количество логов в одном запросе")
-	workerCount := flag.Int("worker-count", 4, "Количество рабочих горутин")
+	// Parameters for testing
+	mode := flag.String("mode", "victoria", "Operating mode")
+	rps := flag.Int("rps", 10, "Requests per second")
+	duration := flag.Duration("duration", 1*time.Minute, "Test duration")
+	bulkSize := flag.Int("bulk-size", 100, "Number of logs per request")
+	workerCount := flag.Int("worker-count", 4, "Number of worker goroutines")
 
-	// Разбор аргументов
+	// Parse arguments
 	flag.Parse()
 
-	// Проверка результатов
+	// Check results
 	if *mode != "es" {
-		t.Errorf("Неправильный режим, ожидалось 'es', получено '%s'", *mode)
+		t.Errorf("Incorrect mode, expected 'es', got '%s'", *mode)
 	}
 
 	if *rps != 100 {
-		t.Errorf("Неправильное значение RPS, ожидалось 100, получено %d", *rps)
+		t.Errorf("Incorrect RPS value, expected 100, got %d", *rps)
 	}
 
 	if *bulkSize != 50 {
-		t.Errorf("Неправильный размер пакета, ожидалось 50, получено %d", *bulkSize)
+		t.Errorf("Incorrect bulk size, expected 50, got %d", *bulkSize)
 	}
 
 	if *workerCount != 4 {
-		t.Errorf("Неправильное количество воркеров, ожидалось 4, получено %d", *workerCount)
+		t.Errorf("Incorrect worker count, expected 4, got %d", *workerCount)
 	}
 
 	if *duration != 10*time.Second {
-		t.Errorf("Неправильная продолжительность, ожидалось 10s, получено %v", *duration)
+		t.Errorf("Incorrect duration, expected 10s, got %v", *duration)
 	}
 }
 
-// TestCreateConfig проверяет создание конфигурации из аргументов командной строки
+// TestCreateConfig checks the creation of configuration from command line arguments
 func TestCreateConfig(t *testing.T) {
-	// Создаем тестовую конфигурацию
+	// Create test configuration
 	config := pkg.Config{
 		Mode:          "victoria",
 		URL:           "http://localhost:8428",
@@ -83,16 +84,16 @@ func TestCreateConfig(t *testing.T) {
 		},
 	}
 
-	// Проверяем значения конфигурации
+	// Check configuration values
 	if config.Mode != "victoria" {
-		t.Errorf("Неправильный режим в конфигурации: %s", config.Mode)
+		t.Errorf("Incorrect mode in configuration: %s", config.Mode)
 	}
 
 	if config.RPS != 10 {
-		t.Errorf("Неправильное значение RPS: %d", config.RPS)
+		t.Errorf("Incorrect RPS value: %d", config.RPS)
 	}
 
-	// Проверка распределения типов логов
+	// Check log type distribution
 	expectedDist := map[string]int{
 		"web_access":  60,
 		"web_error":   10,
@@ -103,13 +104,13 @@ func TestCreateConfig(t *testing.T) {
 
 	for logType, expectedPercent := range expectedDist {
 		if config.LogTypeDistribution[logType] != expectedPercent {
-			t.Errorf("Неправильное распределение для типа '%s': ожидалось %d%%, получено %d%%",
+			t.Errorf("Incorrect distribution for type '%s': expected %d%%, got %d%%",
 				logType, expectedPercent, config.LogTypeDistribution[logType])
 		}
 	}
 }
 
-// MockLogDBForTest - мок для интерфейса logdb.LogDB
+// MockLogDBForTest - mock for the logdb.LogDB interface
 type MockLogDBForTest struct {
 	name string
 }
