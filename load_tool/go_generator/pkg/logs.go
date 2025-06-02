@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// Глобальный генератор случайных чисел
+// Global random number generator
 var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-// Структуры для различных типов логов
+// Structures for different log types
 type BaseLog struct {
 	Timestamp     string `json:"timestamp"`
 	LogType       string `json:"log_type"`
@@ -91,7 +91,7 @@ type EventLog struct {
 	Service    string `json:"service"`
 }
 
-// Генераторы случайных данных
+// Random data generators
 func GenerateRandomIP() string {
 	return fmt.Sprintf("%d.%d.%d.%d", rnd.Intn(256), rnd.Intn(256), rnd.Intn(256), rnd.Intn(256))
 }
@@ -118,27 +118,27 @@ func GenerateRandomHttpMethod() string {
 }
 
 func GenerateRandomPath() string {
-	// Генерация случайного пути с несколькими сегментами
+	// Generation of random path with multiple segments
 	segments := []string{
 		"api", "v1", "v2", "users", "products", "orders", "admin", "auth", "login", "logout",
 		"register", "profile", "settings", "dashboard", "analytics", "reports", "images", "files",
 		"upload", "download", "search", "categories", "tags", "comments", "reviews", "ratings",
 		"cart", "checkout", "payment", "shipping", "blog", "articles", "news", "events",
 	}
-	
-	// Случайное количество сегментов от 1 до 4
+
+	// Random number of segments from 1 to 4
 	numSegments := rnd.Intn(4) + 1
 	path := ""
-	
+
 	for i := 0; i < numSegments; i++ {
 		path += "/" + segments[rnd.Intn(len(segments))]
 	}
-	
-	// Иногда добавляем параметры запроса
+
+	// Sometimes add query parameters
 	if rnd.Intn(3) == 0 {
 		path += fmt.Sprintf("?id=%d&limit=%d", rnd.Intn(1000), 10+rnd.Intn(90))
 	}
-	
+
 	return path
 }
 
@@ -250,13 +250,13 @@ func GenerateRandomException() string {
 
 func GenerateRandomStackTrace(exception string) string {
 	var parts []string
-	
+
 	if strings.HasPrefix(exception, "java") {
 		// Java stacktrace
 		parts = append(parts, exception+": "+GenerateRandomErrorMessage())
 		packageNames := []string{"com.example", "org.service", "io.client", "net.util", "app.core"}
 		methodNames := []string{"processRequest", "validateInput", "fetchData", "updateRecord", "authenticate", "initialize"}
-		
+
 		depth := 3 + rnd.Intn(7) // 3-10 frames
 		for i := 0; i < depth; i++ {
 			pkg := packageNames[rnd.Intn(len(packageNames))]
@@ -265,13 +265,13 @@ func GenerateRandomStackTrace(exception string) string {
 			line := rnd.Intn(500) + 1
 			parts = append(parts, fmt.Sprintf("\tat %s.%s.%s(%s.java:%d)", pkg, cls, method, cls, line))
 		}
-		
+
 	} else if strings.HasPrefix(exception, "python") {
 		// Python traceback
 		parts = append(parts, "Traceback (most recent call last):")
 		fileNames := []string{"app.py", "utils.py", "models.py", "views.py", "services.py"}
 		methodNames := []string{"process_request", "validate_input", "fetch_data", "update_record", "authenticate", "initialize"}
-		
+
 		depth := 3 + rnd.Intn(5) // 3-8 frames
 		for i := 0; i < depth; i++ {
 			file := fileNames[rnd.Intn(len(fileNames))]
@@ -286,7 +286,7 @@ func GenerateRandomStackTrace(exception string) string {
 		parts = append(parts, exception+": "+GenerateRandomErrorMessage())
 		fileNames := []string{"app.js", "server.go", "api.rb", "client.php", "handler.cs"}
 		methodNames := []string{"processRequest", "validateInput", "fetchData", "updateRecord", "authenticate", "initialize"}
-		
+
 		depth := 2 + rnd.Intn(5) // 2-7 frames
 		for i := 0; i < depth; i++ {
 			file := fileNames[rnd.Intn(len(fileNames))]
@@ -295,7 +295,7 @@ func GenerateRandomStackTrace(exception string) string {
 			parts = append(parts, fmt.Sprintf("    at %s (%s:%d)", method, file, line))
 		}
 	}
-	
+
 	return strings.Join(parts, "\n")
 }
 
@@ -331,7 +331,7 @@ func GenerateRandomEnvironment() string {
 
 func GenerateRandomRequestID() string {
 	chars := "abcdef0123456789"
-	length := 16 + rnd.Intn(16) // 16-32 символа
+	length := 16 + rnd.Intn(16) // 16-32 characters
 	id := make([]byte, length)
 	for i := range id {
 		id[i] = chars[rnd.Intn(len(chars))]
@@ -357,21 +357,21 @@ func GenerateRandomGitCommit() string {
 
 func GenerateRandomTags() []string {
 	allTags := []string{
-		"backend", "frontend", "database", "cache", "network", "security", 
-		"performance", "storage", "memory", "cpu", "disk", "timeout", 
-		"connection", "authentication", "critical", "warning", "info", 
+		"backend", "frontend", "database", "cache", "network", "security",
+		"performance", "storage", "memory", "cpu", "disk", "timeout",
+		"connection", "authentication", "critical", "warning", "info",
 		"microservice", "gateway", "proxy", "rate-limit", "firewall",
 	}
-	
-	numTags := 1 + rnd.Intn(5) // 1-5 тегов
+
+	numTags := 1 + rnd.Intn(5) // 1-5 tags
 	if numTags > len(allTags) {
 		numTags = len(allTags)
 	}
-	
-	// Выбираем уникальные теги
+
+	// Select unique tags
 	selected := make(map[int]bool)
 	tags := make([]string, 0, numTags)
-	
+
 	for len(tags) < numTags {
 		idx := rnd.Intn(len(allTags))
 		if !selected[idx] {
@@ -379,33 +379,33 @@ func GenerateRandomTags() []string {
 			tags = append(tags, allTags[idx])
 		}
 	}
-	
+
 	return tags
 }
 
 func GenerateRandomErrorContext() map[string]string {
 	keys := []string{
-		"request_id", "session_id", "user_agent", "client_ip", "server_ip", 
+		"request_id", "session_id", "user_agent", "client_ip", "server_ip",
 		"endpoint", "method", "status_code", "correlation_id", "tenant_id",
 		"node_id", "cluster_id", "query", "duration_ms", "rate_limit",
 		"resource_type", "operation", "transaction_id", "thread_id", "process_id",
 	}
-	
+
 	values := []string{
 		"d8e8fca2dc0f896fd7cb4cb0031ba249", "95f8d9ba-7f3a-4f93-8c8a-123456789abc",
 		"Mozilla/5.0", "192.168.1.1", "10.0.0.123", "/api/v1/users", "GET", "404",
 		"cor-123456", "tenant-007", "node-12", "cluster-east1", "SELECT * FROM users",
 		"356", "100", "user", "create", "tx-987654", "thread-5", "pid-12345",
 	}
-	
-	numFields := 2 + rnd.Intn(6) // 2-8 полей
+
+	numFields := 2 + rnd.Intn(6) // 2-8 fields
 	context := make(map[string]string)
-	
+
 	for i := 0; i < numFields; i++ {
 		key := keys[rnd.Intn(len(keys))]
 		value := values[rnd.Intn(len(values))]
-		
-		// Добавляем некоторую вариативность в значения
+
+		// Add some variability to values
 		if strings.Contains(key, "id") {
 			value = fmt.Sprintf("%s-%d", value, rnd.Intn(1000))
 		} else if strings.Contains(key, "ip") {
@@ -413,30 +413,30 @@ func GenerateRandomErrorContext() map[string]string {
 		} else if strings.Contains(key, "duration") {
 			value = fmt.Sprintf("%d", rnd.Intn(10000))
 		}
-		
+
 		context[key] = value
 	}
-	
+
 	return context
 }
 
 func GenerateRandomDependencies() []string {
 	allDeps := []string{
-		"postgres:13.3", "redis:6.2", "mongodb:4.4", "nginx:1.21", 
+		"postgres:13.3", "redis:6.2", "mongodb:4.4", "nginx:1.21",
 		"rabbitmq:3.9", "kafka:2.8", "elasticsearch:7.14", "mysql:8.0",
 		"memcached:1.6", "cassandra:4.0", "zookeeper:3.7", "etcd:3.5",
 		"prometheus:2.30", "grafana:8.2", "influxdb:2.0", "kibana:7.14",
 	}
-	
-	numDeps := 1 + rnd.Intn(5) // 1-5 зависимостей
+
+	numDeps := 1 + rnd.Intn(5) // 1-5 dependencies
 	if numDeps > len(allDeps) {
 		numDeps = len(allDeps)
 	}
-	
-	// Выбираем уникальные зависимости
+
+	// Select unique dependencies
 	selected := make(map[int]bool)
 	deps := make([]string, 0, numDeps)
-	
+
 	for len(deps) < numDeps {
 		idx := rnd.Intn(len(allDeps))
 		if !selected[idx] {
@@ -444,12 +444,12 @@ func GenerateRandomDependencies() []string {
 			deps = append(deps, allDeps[idx])
 		}
 	}
-	
+
 	return deps
 }
 
 func GenerateLogMessage(logLevel string) string {
-	// Генерация сообщения лога в зависимости от уровня
+	// Generate log message based on log level
 	switch logLevel {
 	case "debug":
 		debugMessages := []string{
@@ -477,21 +477,21 @@ func GenerateLogMessage(logLevel string) string {
 }
 
 func SelectRandomLogType(distribution map[string]int) string {
-	// Вычисляем общую сумму весов
+	// Calculate total weight
 	totalWeight := 0
 	for _, weight := range distribution {
 		totalWeight += weight
 	}
-	
+
 	if totalWeight <= 0 {
-		// Если общий вес <= 0, возвращаем web_access по умолчанию
+		// If total weight <= 0, return web_access by default
 		return "web_access"
 	}
-	
-	// Выбираем случайное число от 0 до totalWeight-1
+
+	// Select random number from 0 to totalWeight-1
 	r := rnd.Intn(totalWeight)
-	
-	// Находим соответствующий тип лога
+
+	// Find corresponding log type
 	current := 0
 	for logType, weight := range distribution {
 		current += weight
@@ -499,69 +499,69 @@ func SelectRandomLogType(distribution map[string]int) string {
 			return logType
 		}
 	}
-	
-	// По умолчанию возвращаем web_access
+
+	// Return web_access by default
 	return "web_access"
 }
 
 func CountLogTypes(payload string) map[string]int {
 	counts := make(map[string]int)
-	
-	// Разделение пакета на отдельные строки
+
+	// Split payload into individual lines
 	lines := strings.Split(payload, "\n")
-	
+
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
-		
-		// Попытка распарсить JSON
+
+		// Attempt to parse JSON
 		var logEntry map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &logEntry); err != nil {
 			continue
 		}
-		
-		// Проверка наличия поля log_type
+
+		// Check for log_type field
 		if logType, ok := logEntry["log_type"].(string); ok {
 			counts[logType]++
 		}
 	}
-	
+
 	return counts
 }
 
 func GenerateLog(logType string, timestamp string) interface{} {
-	// Общие поля для базового лога
+	// Common fields for base log
 	baseLog := BaseLog{
 		Timestamp:     timestamp,
 		LogType:       logType,
 		Host:          GenerateRandomHost(),
 		ContainerName: GenerateRandomContainer(),
 	}
-	
-	// С 30% вероятностью добавляем дополнительные базовые поля
+
+	// With 30% probability, add additional base fields
 	if rnd.Intn(10) < 3 {
 		baseLog.Environment = GenerateRandomEnvironment()
 		baseLog.DataCenter = GenerateRandomDataCenter()
 		baseLog.Version = GenerateRandomVersion()
 		baseLog.GitCommit = GenerateRandomGitCommit()
 	}
-	
+
 	switch logType {
 	case "web_access":
-		// Лог веб-доступа (как NGINX access log)
+		// Web access log (like NGINX access log)
 		method := GenerateRandomHttpMethod()
 		path := GenerateRandomPath()
 		status := GenerateRandomHttpStatus()
-		
-		// Для ошибок добавляем сообщение об ошибке
+
+		// For errors, add error message
 		var message string
 		if status >= 400 {
 			message = GenerateRandomErrorMessage()
 		} else {
 			message = fmt.Sprintf("Request processed successfully: %s %s", method, path)
 		}
-		
+
 		return WebAccessLog{
 			BaseLog:       baseLog,
 			RemoteAddr:    GenerateRandomIP(),
@@ -570,21 +570,21 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			BytesSent:     rnd.Intn(10000) + 100,
 			HttpReferer:   "https://example.com" + GenerateRandomPath(),
 			HttpUserAgent: GenerateRandomUserAgent(),
-			RequestTime:   float64(rnd.Intn(10000)) / 1000.0, // от 0 до 10 секунд
+			RequestTime:   float64(rnd.Intn(10000)) / 1000.0, // 0-10 seconds
 			Message:       message,
 		}
-		
+
 	case "web_error":
-		// Лог ошибки веб-сервера
+		// Web server error log
 		level := "error"
 		if rnd.Intn(2) == 0 {
 			level = "critical"
 		}
-		
+
 		errorCode := rnd.Intn(1000) + 1000
 		service := GenerateRandomService()
-		
-		// Базовый лог ошибки
+
+		// Base error log
 		errorLog := WebErrorLog{
 			BaseLog:   baseLog,
 			Level:     level,
@@ -593,8 +593,8 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			Service:   service,
 			RequestID: GenerateRandomRequestID(),
 		}
-		
-		// С 60% вероятностью добавляем дополнительные детали к логу ошибки
+
+		// With 60% probability, add additional error log details
 		if rnd.Intn(10) < 6 {
 			errorLog.RequestPath = GenerateRandomPath()
 			errorLog.ClientIP = GenerateRandomIP()
@@ -603,29 +603,29 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			errorLog.Tags = GenerateRandomTags()
 			errorLog.Context = GenerateRandomErrorContext()
 		}
-		
-		// С 40% вероятностью добавляем исключение со стектрейсом
+
+		// With 40% probability, add exception with stacktrace
 		if rnd.Intn(10) < 4 {
 			exception := GenerateRandomException()
 			errorLog.Exception = exception
 			errorLog.Stacktrace = GenerateRandomStackTrace(exception)
 		}
-		
+
 		return errorLog
-		
+
 	case "application":
-		// Лог приложения
+		// Application log
 		level := GenerateRandomLogLevel()
 		service := GenerateRandomService()
-		
-		// Генерация случайных идентификаторов трассировки
+
+		// Generate random trace IDs
 		traceID := fmt.Sprintf("%x", rnd.Int63())
 		spanID := fmt.Sprintf("%x", rnd.Int63())
-		
+
 		method := GenerateRandomHttpMethod()
 		path := GenerateRandomPath()
-		
-		// Создание случайных параметров запроса
+
+		// Create random request parameters
 		params := make(map[string]string)
 		numParams := rnd.Intn(5)
 		for i := 0; i < numParams; i++ {
@@ -633,18 +633,18 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			paramValue := fmt.Sprintf("value%d", rnd.Intn(100))
 			params[paramKey] = paramValue
 		}
-		
+
 		status := GenerateRandomHttpStatus()
-		responseTime := float64(rnd.Intn(1000)) / 100.0 // от 0 до 10 секунд
-		
+		responseTime := float64(rnd.Intn(1000)) / 100.0 // 0-10 seconds
+
 		var message string
 		if level == "error" || level == "critical" {
 			message = GenerateRandomErrorMessage()
 		} else {
 			message = GenerateLogMessage(level)
 		}
-		
-		// Базовый лог приложения
+
+		// Base application log
 		appLog := ApplicationLog{
 			BaseLog:        baseLog,
 			Level:          level,
@@ -658,42 +658,42 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			ResponseStatus: status,
 			ResponseTime:   responseTime,
 		}
-		
-		// С 50% вероятностью добавляем дополнительные поля для логов приложения
+
+		// With 50% probability, add additional application log fields
 		if rnd.Intn(10) < 5 {
 			appLog.UserID = fmt.Sprintf("user-%d", rnd.Intn(10000))
 			appLog.SessionID = fmt.Sprintf("session-%x", rnd.Int63())
 			appLog.Dependencies = GenerateRandomDependencies()
-			appLog.Memory = float64(rnd.Intn(1024)) // MB
+			appLog.Memory = float64(rnd.Intn(1024))     // MB
 			appLog.CPU = float64(rnd.Intn(100)) / 100.0 // 0-100%
 		}
-		
-		// Для уровней error/critical с 70% вероятностью добавляем исключение
+
+		// For error/critical levels, with 70% probability, add exception
 		if (level == "error" || level == "critical") && rnd.Intn(10) < 7 {
 			exception := GenerateRandomException()
 			appLog.Exception = exception
 			appLog.Stacktrace = GenerateRandomStackTrace(exception)
 		}
-		
+
 		return appLog
-		
+
 	case "metric":
-		// Лог метрики
+		// Metric log
 		metricNames := []string{
 			"cpu_usage", "memory_usage", "disk_usage", "network_in", "network_out",
 			"requests_per_second", "response_time", "error_rate", "success_rate",
 			"queue_length", "active_users", "active_sessions", "cache_hit_ratio",
 		}
-		
+
 		regions := []string{
 			"us-east-1", "us-west-1", "eu-west-1", "eu-central-1", "ap-northeast-1", "ap-southeast-1",
 		}
-		
+
 		service := GenerateRandomService()
 		metricName := metricNames[rnd.Intn(len(metricNames))]
 		value := float64(rnd.Intn(10000)) / 100.0
 		region := regions[rnd.Intn(len(regions))]
-		
+
 		return MetricLog{
 			BaseLog:    baseLog,
 			MetricName: metricName,
@@ -702,20 +702,20 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			Region:     region,
 			Message:    fmt.Sprintf("Metric %s for service %s in region %s: %.2f", metricName, service, region, value),
 		}
-		
+
 	case "event":
-		// Лог события
+		// Event log
 		eventTypes := []string{
 			"system_start", "system_stop", "deploy", "rollback", "config_change",
 			"scaling_up", "scaling_down", "backup", "restore", "maintenance",
 			"alert", "notification", "scheduled_task", "migration", "sync",
 		}
-		
+
 		eventType := eventTypes[rnd.Intn(len(eventTypes))]
 		service := GenerateRandomService()
 		resourceID := fmt.Sprintf("res-%d", rnd.Intn(10000))
 		namespace := fmt.Sprintf("ns-%d", rnd.Intn(100))
-		
+
 		return EventLog{
 			BaseLog:    baseLog,
 			EventType:  eventType,
@@ -725,8 +725,8 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			Service:    service,
 		}
 	}
-	
-	// Если тип лога неизвестен, возвращаем базовый лог
+
+	// If log type is unknown, return base log
 	return baseLog
 }
 

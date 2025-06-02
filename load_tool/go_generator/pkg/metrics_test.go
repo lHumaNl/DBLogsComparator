@@ -44,7 +44,6 @@ func TestStartMetricsServer(t *testing.T) {
 	_, err := client.Get(fmt.Sprintf("http://localhost:%d/", testPort))
 	if err == nil {
 		// Port is already in use
-		// Порт уже занят
 		t.Skip("Port is already in use, skipping test")
 	}
 

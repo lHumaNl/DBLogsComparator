@@ -27,24 +27,17 @@ func TestMain(m *testing.M) {
 
 // Test environment setup
 func setupTestEnvironment() {
-	// Here we can prepare the test environment:
+	// Here you can prepare the test environment:
 	// - Set environment variables
 	// - Initialize resources
 	// - Create temporary files
-	// Здесь можно подготовить тестовое окружение:
-	// - Установить переменные окружения
-	// - Инициализировать ресурсы
-	// - Создать временные файлы
 }
 
 // Test environment cleanup
 func teardownTestEnvironment() {
-	// Here we can clean up the test environment:
+	// Here you can clean up the test environment:
 	// - Remove temporary files
 	// - Free up resources
-	// Здесь можно очистить тестовое окружение:
-	// - Удалить временные файлы
-	// - Освободить ресурсы
 }
 
 // Integration test to verify core functionality

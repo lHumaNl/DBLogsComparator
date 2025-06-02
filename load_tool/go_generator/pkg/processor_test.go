@@ -1,16 +1,16 @@
 package pkg
 
 import (
-	"encoding/json"
-	"io"
-	"strings"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
 )
 
-// MockLogDB - имитация базы данных для тестирования
+// MockLogDB - mock database for testing
 type MockLogDB struct {
 	name       string
 	sendCalled int
@@ -55,35 +55,35 @@ func (m *MockLogDB) FormatPayload(logs []logdb.LogEntry) (string, string) {
 }
 
 func TestCreateBulkPayload(t *testing.T) {
-	// Тестирование создания пакета логов
+	// Testing log package creation
 	config := Config{
 		Mode:                "test",
 		BulkSize:            10,
-		LogTypeDistribution: map[string]int{"web_access": 100}, // Только один тип для упрощения
+		LogTypeDistribution: map[string]int{"web_access": 100}, // Only one type for simplicity
 	}
 
 	bufferPool := NewBufferPool()
 	logs := CreateBulkPayload(config, bufferPool)
 
-	// Проверка размера пакета
+	// Check package size
 	if len(logs) != config.BulkSize {
-		t.Errorf("Размер пакета должен быть %d, получено %d", config.BulkSize, len(logs))
+		t.Errorf("Package size should be %d, got %d", config.BulkSize, len(logs))
 	}
 
-	// Проверка типа логов и структуры
+	// Check log type and structure
 	for _, log := range logs {
 		if logType, ok := log["log_type"].(string); !ok || logType != "web_access" {
-			t.Errorf("Ожидаемый тип лога 'web_access', получено '%v'", logType)
+			t.Errorf("Expected log type 'web_access', got '%v'", logType)
 		}
 
 		if _, ok := log["timestamp"].(string); !ok {
-			t.Error("В логе должно быть поле 'timestamp' типа string")
+			t.Error("Log should have a 'timestamp' field of type string")
 		}
 	}
 }
 
 func TestWorker(t *testing.T) {
-	// Тестирование функции Worker
+	// Testing Worker function
 	config := Config{
 		BulkSize:            5,
 		LogTypeDistribution: map[string]int{"web_access": 100},
@@ -94,86 +94,86 @@ func TestWorker(t *testing.T) {
 	stats := &Stats{}
 	bufferPool := NewBufferPool()
 
-	// Создаем канал для задач
+	// Create a channel for tasks
 	jobs := make(chan struct{}, 2)
-	jobs <- struct{}{} // Добавляем две задачи
+	jobs <- struct{}{} // Add two tasks
 	jobs <- struct{}{}
-	close(jobs) // Закрываем канал, чтобы Worker завершился
+	close(jobs) // Close the channel so the Worker finishes
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	// Запускаем Worker с макетом базы данных
+	// Start Worker with mock database
 	db := NewMockLogDB("mockdb", false)
 	go Worker(1, jobs, stats, config, db, bufferPool, &wg)
 
-	// Ожидаем завершения
+	// Wait for completion
 	wg.Wait()
 
-	// Проверяем статистику
+	// Check statistics
 	if db.sendCalled != 2 {
-		t.Errorf("Метод SendLogs должен быть вызван 2 раза, фактически: %d", db.sendCalled)
+		t.Errorf("SendLogs method should be called 2 times, actually: %d", db.sendCalled)
 	}
 
 	if atomic.LoadInt64(&stats.TotalRequests) != 2 {
-		t.Errorf("TotalRequests должно быть 2, получено %d", stats.TotalRequests)
+		t.Errorf("TotalRequests should be 2, got %d", stats.TotalRequests)
 	}
 
 	if atomic.LoadInt64(&stats.SuccessfulRequests) != 2 {
-		t.Errorf("SuccessfulRequests должно быть 2, получено %d", stats.SuccessfulRequests)
+		t.Errorf("SuccessfulRequests should be 2, got %d", stats.SuccessfulRequests)
 	}
 
 	if atomic.LoadInt64(&stats.TotalLogs) != int64(2*config.BulkSize) {
-		t.Errorf("TotalLogs должно быть %d, получено %d", 2*config.BulkSize, stats.TotalLogs)
+		t.Errorf("TotalLogs should be %d, got %d", 2*config.BulkSize, stats.TotalLogs)
 	}
 
-	// Тестирование с ошибкой
+	// Testing with error
 	stats = &Stats{}
 	jobs = make(chan struct{}, 1)
 	jobs <- struct{}{}
 	close(jobs)
 
 	wg.Add(1)
-	db = NewMockLogDB("mockdb", true) // Эта база данных будет возвращать ошибку
+	db = NewMockLogDB("mockdb", true) // This database will return an error
 	go Worker(1, jobs, stats, config, db, bufferPool, &wg)
 
 	wg.Wait()
 
 	if atomic.LoadInt64(&stats.FailedRequests) != 1 {
-		t.Errorf("FailedRequests должно быть 1, получено %d", stats.FailedRequests)
+		t.Errorf("FailedRequests should be 1, got %d", stats.FailedRequests)
 	}
 }
 
 func TestStatsReporter(t *testing.T) {
-	// Тестирование функции StatsReporter
+	// Testing StatsReporter function
 	stats := &Stats{
 		StartTime: time.Now(),
 	}
 
-	// Устанавливаем некоторые начальные значения статистики
+	// Set some initial statistic values
 	atomic.StoreInt64(&stats.TotalRequests, 100)
 	atomic.StoreInt64(&stats.SuccessfulRequests, 95)
 	atomic.StoreInt64(&stats.FailedRequests, 5)
 	atomic.StoreInt64(&stats.TotalLogs, 1000)
 
-	// Создаем канал для остановки
+	// Create a channel for stopping
 	stopChan := make(chan struct{})
 
 	config := Config{
 		EnableMetrics: false,
 	}
 
-	// Запускаем StatsReporter на короткое время
+	// Run StatsReporter for a short time
 	go StatsReporter(stats, stopChan, config)
 
-	// Даем ему немного поработать (достаточно для одного тика)
+	// Let it work for a bit (enough for one tick)
 	time.Sleep(1100 * time.Millisecond)
 
-	// Останавливаем
+	// Stop
 	close(stopChan)
 
-	// Нет явных проверок, поскольку StatsReporter просто выводит информацию
-	// Можно было бы перенаправлять stdout и проверять вывод, но это сложнее
-	// В реальном тесте мы можем проверить, что функция не паникует
-	// и корректно останавливается при закрытии канала
+	// No explicit checks since StatsReporter just outputs information
+	// We could redirect stdout and check the output, but that's more complex
+	// In a real test we can verify that the function doesn't panic
+	// and correctly stops when the channel is closed
 }
