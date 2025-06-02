@@ -15,14 +15,14 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
-// LokiExecutor исполнитель запросов для Loki
+// LokiExecutor query executor for Loki
 type LokiExecutor struct {
 	BaseURL string
 	Client  *http.Client
 	Options models.Options
 }
 
-// LokiResponse представляет ответ API Loki для запроса Query
+// LokiResponse represents the Loki API response for Query request
 type LokiResponse struct {
 	Status string `json:"status"`
 	Data   struct {
@@ -40,20 +40,20 @@ type LokiResponse struct {
 	} `json:"data"`
 }
 
-// Фиксированные ключевые слова для поиска в логах
+// Fixed keywords for searching in logs
 var lokiQueryPhrases = []string{
 	"error", "warning", "info", "debug", "critical",
 	"failed", "success", "timeout", "exception",
 	"unauthorized", "forbidden", "not found",
 }
 
-// Фиксированные метки для фильтрации в Loki
+// Fixed labels for filtering in Loki
 var lokiLabels = []string{
 	"log_type", "host", "container_name", "environment", "datacenter",
 	"version", "level", "service", "job", "instance",
 }
 
-// NewLokiExecutor создает новый исполнитель запросов для Loki
+// NewLokiExecutor creates a new query executor for Loki
 func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
 	client := &http.Client{
 		Timeout: options.Timeout,
@@ -66,17 +66,17 @@ func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
 	}
 }
 
-// GetSystemName возвращает название системы
+// GetSystemName returns the system name
 func (e *LokiExecutor) GetSystemName() string {
 	return "loki"
 }
 
-// ExecuteQuery выполняет запрос указанного типа в Loki
+// ExecuteQuery executes a query of the specified type in Loki
 func (e *LokiExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryType) (models.QueryResult, error) {
-	// Создаем случайный запрос указанного типа
+	// Create a random query of the specified type
 	queryInfo := e.GenerateRandomQuery(queryType).(map[string]string)
 
-	// Выполняем запрос к Loki
+	// Execute the query to Loki
 	result, err := e.executeLokiQuery(ctx, queryInfo)
 	if err != nil {
 		return models.QueryResult{}, err
@@ -85,52 +85,52 @@ func (e *LokiExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryT
 	return result, nil
 }
 
-// GenerateRandomQuery создает случайный запрос указанного типа для Loki
+// GenerateRandomQuery creates a random query of the specified type for Loki
 func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	// Общий промежуток времени - последние 24 часа
+	// Common time range - last 24 hours
 	now := time.Now()
 	startTime := now.Add(-24 * time.Hour)
 
-	// Для некоторых запросов берем более короткий промежуток времени
+	// For some queries, we take a shorter time range
 	var queryString string
 	var start string
 	var end string
 	var limit string
 	var queryPath string
 
-	// Преобразуем время в формат, понятный Loki (UNIX наносекунды)
+	// Convert time to a format understood by Loki (UNIX nanoseconds)
 	start = strconv.FormatInt(startTime.UnixNano(), 10)
 	end = strconv.FormatInt(now.UnixNano(), 10)
 
 	switch queryType {
 	case models.SimpleQuery:
-		// Простой поиск по логу с одним фильтром
+		// Simple log search with one filter
 		if rand.Intn(2) == 0 {
-			// Поиск по ключевому слову в логе
+			// Search by keyword in log
 			keyword := lokiQueryPhrases[rand.Intn(len(lokiQueryPhrases))]
 			queryString = fmt.Sprintf("{} |= \"%s\"", keyword)
 		} else {
-			// Поиск по метке
+			// Search by label
 			label := lokiLabels[rand.Intn(len(lokiLabels))]
 			labelValue := fmt.Sprintf("value%d", rand.Intn(100))
 			queryString = fmt.Sprintf("{%s=\"%s\"}", label, labelValue)
 		}
 
-		limit = strconv.Itoa(100 + rand.Intn(100)) // Лимит от 100 до 199
+		limit = strconv.Itoa(100 + rand.Intn(100)) // Limit from 100 to 199
 		queryPath = "query_range"
 
 	case models.ComplexQuery:
-		// Сложный поиск с несколькими условиями
+		// Complex search with multiple conditions
 
-		// Начнем с выбора нескольких меток для фильтрации
+		// Start by selecting several labels for filtering
 		labelFilters := []string{}
 
-		// Случайное количество меток от 1 до 3
+		// Random number of labels from 1 to 3
 		numLabels := 1 + rand.Intn(3)
 		usedLabels := map[string]bool{}
 
 		for i := 0; i < numLabels; i++ {
-			// Выберем случайную метку, которую еще не использовали
+			// Select a random label that hasn't been used yet
 			var label string
 			for {
 				label = lokiLabels[rand.Intn(len(lokiLabels))]
@@ -138,7 +138,7 @@ func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface
 					usedLabels[label] = true
 					break
 				}
-				// Если все метки уже использованы, просто выходим из цикла
+				// If all labels are already used, just exit the loop
 				if len(usedLabels) == len(lokiLabels) {
 					break
 				}
@@ -148,47 +148,47 @@ func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface
 			labelFilters = append(labelFilters, fmt.Sprintf("%s=\"%s\"", label, labelValue))
 		}
 
-		// Создаем селектор логов с метками
+		// Create a log selector with labels
 		labelSelector := "{" + strings.Join(labelFilters, ", ") + "}"
 
-		// Добавляем фильтры по содержимому
+		// Add content filters
 		contentFilters := []string{}
 
-		// Случайное количество фильтров по содержимому от 0 до 2
+		// Random number of content filters from 0 to 2
 		numContentFilters := rand.Intn(3)
 		for i := 0; i < numContentFilters; i++ {
-			// Выбираем случайное ключевое слово
+			// Select a random keyword
 			keyword := lokiQueryPhrases[rand.Intn(len(lokiQueryPhrases))]
 
-			// Случайно выбираем оператор фильтрации
+			// Randomly select a filtering operator
 			operators := []string{"|=", "!=", "|~", "!~"}
 			operator := operators[rand.Intn(len(operators))]
 
 			contentFilters = append(contentFilters, fmt.Sprintf("%s \"%s\"", operator, keyword))
 		}
 
-		// Собираем полный запрос
+		// Assemble the complete query
 		queryString = labelSelector
 		if len(contentFilters) > 0 {
 			queryString += " " + strings.Join(contentFilters, " ")
 		}
 
-		limit = strconv.Itoa(100 + rand.Intn(150)) // Лимит от 100 до 249
+		limit = strconv.Itoa(100 + rand.Intn(150)) // Limit from 100 to 249
 		queryPath = "query_range"
 
 	case models.AnalyticalQuery:
-		// Аналитический запрос с логическими операциями
+		// Analytical query with logical operations
 
-		// Выбираем более короткий промежуток времени - последние 12 часов
+		// Select a shorter time range - last 12 hours
 		startTime = now.Add(-12 * time.Hour)
 		start = strconv.FormatInt(startTime.UnixNano(), 10)
 
-		// Создаем базовый селектор логов с одной меткой
+		// Create a basic log selector with one label
 		label := lokiLabels[rand.Intn(len(lokiLabels))]
 		labelValue := fmt.Sprintf("value%d", rand.Intn(100))
 		labelSelector := fmt.Sprintf("{%s=\"%s\"}", label, labelValue)
 
-		// Случайно выбираем тип аналитической операции
+		// Randomly select the type of analytical operation
 		operations := []string{
 			"| json",
 			"| logfmt",
@@ -197,189 +197,154 @@ func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface
 		}
 		operation := operations[rand.Intn(len(operations))]
 
-		// Формируем запрос в зависимости от операции
+		// Form the query depending on the operation
 		switch operation {
 		case "| json":
-			// Извлечение полей из JSON
-			fields := []string{"msg", "level", "status", "error"}
+			// Extracting fields from JSON
+			fields := []string{"level", "message", "error", "status", "duration"}
 			field := fields[rand.Intn(len(fields))]
-			queryString = fmt.Sprintf("%s | json | %s=\"%s\"",
-				labelSelector,
-				field,
-				lokiQueryPhrases[rand.Intn(len(lokiQueryPhrases))])
-
+			queryString = fmt.Sprintf("%s | json | %s=\"%s\"", labelSelector, field, lokiQueryPhrases[rand.Intn(len(lokiQueryPhrases))])
 		case "| logfmt":
-			// Парсинг logfmt формата
-			fields := []string{"level", "status", "method", "path"}
+			// Parsing logfmt format
+			fields := []string{"level", "msg", "err", "status", "duration"}
 			field := fields[rand.Intn(len(fields))]
-			queryString = fmt.Sprintf("%s | logfmt | %s=\"%s\"",
-				labelSelector,
-				field,
-				lokiQueryPhrases[rand.Intn(len(lokiQueryPhrases))])
-
+			queryString = fmt.Sprintf("%s | logfmt | %s=\"%s\"", labelSelector, field, lokiQueryPhrases[rand.Intn(len(lokiQueryPhrases))])
 		case "| pattern":
-			// Поиск по шаблону
+			// Pattern matching
 			patterns := []string{
-				"<* *>",
-				"* - - *",
-				"* * *: *",
+				"<_> level=<level> msg=<message>",
+				"<_> method=<method> path=<path> status=<status>",
+				"<timestamp> <level> <message>",
+				"<service>: <message>",
 			}
 			pattern := patterns[rand.Intn(len(patterns))]
-			queryString = fmt.Sprintf("%s | pattern `%s`", labelSelector, pattern)
-
+			queryString = fmt.Sprintf("%s | pattern \"%s\"", labelSelector, pattern)
 		case "| line_format":
-			// Форматирование вывода
-			queryString = fmt.Sprintf("%s | json | line_format \"{{.level}} - {{.msg}}\"", labelSelector)
+			// Output formatting
+			queryString = fmt.Sprintf("%s | line_format \"{{.level}}: {{.message}}\"", labelSelector)
 		}
 
-		limit = strconv.Itoa(50 + rand.Intn(50)) // Лимит от 50 до 99
+		limit = strconv.Itoa(50 + rand.Intn(50)) // Limit from 50 to 99
 		queryPath = "query_range"
 
 	case models.TimeSeriesQuery:
-		// Запрос временных рядов
+		// Time series query
 
-		// Используем более короткий промежуток времени - последние 6 часов
+		// Use a shorter time range - last 6 hours
 		startTime = now.Add(-6 * time.Hour)
 		start = strconv.FormatInt(startTime.UnixNano(), 10)
 
-		// Выбираем случайный тип метрики
+		// Select a random metric type
 		metrics := []string{
-			"rate", "count_over_time", "sum_over_time", "avg_over_time",
-			"min_over_time", "max_over_time", "stddev_over_time",
+			"rate", "count_over_time", "bytes_rate", "bytes_over_time",
+			"avg_over_time", "sum_over_time", "min_over_time", "max_over_time",
 		}
 		metric := metrics[rand.Intn(len(metrics))]
 
-		// Создаем селектор логов
+		// Create a log selector
 		label := lokiLabels[rand.Intn(len(lokiLabels))]
 		labelValue := fmt.Sprintf("value%d", rand.Intn(100))
 		labelSelector := fmt.Sprintf("{%s=\"%s\"}", label, labelValue)
 
-		// Случайно выбираем временное окно для агрегации
-		windows := []string{"5m", "10m", "15m", "30m", "1h"}
+		// Randomly select a time window for aggregation
+		windows := []string{"1m", "5m", "10m", "30m", "1h"}
 		window := windows[rand.Intn(len(windows))]
 
 		queryString = fmt.Sprintf("%s(%s[%s])", metric, labelSelector, window)
 
-		// Для некоторых запросов добавляем дополнительную обработку
-		if rand.Intn(3) == 0 {
-			// Группировка по метке
-			byLabels := []string{"job", "instance", "host", "service"}
-			byLabel := byLabels[rand.Intn(len(byLabels))]
-			queryString = fmt.Sprintf("sum by(%s) (%s)", byLabel, queryString)
+		// For some queries, add additional processing
+		if rand.Intn(2) == 0 {
+			// Group by label
+			groupLabels := []string{"level", "service", "job", "instance"}
+			groupLabel := groupLabels[rand.Intn(len(groupLabels))]
+			queryString = fmt.Sprintf("sum by(%s) (%s)", groupLabel, queryString)
 		}
 
-		limit = strconv.Itoa(1000)
+		limit = "100"
 		queryPath = "query_range"
 	}
 
-	// Формируем итоговый запрос
+	// Form the final query
 	return map[string]string{
-		"query": queryString,
-		"start": start,
-		"end":   end,
-		"limit": limit,
-		"path":  queryPath,
+		"query":     queryString,
+		"start":     start,
+		"end":       end,
+		"limit":     limit,
+		"queryPath": queryPath,
 	}
 }
 
-// executeLokiQuery выполняет запрос к Loki
+// executeLokiQuery executes a query to Loki
 func (e *LokiExecutor) executeLokiQuery(ctx context.Context, queryInfo map[string]string) (models.QueryResult, error) {
-	// Формируем URL запроса
-	apiPath := fmt.Sprintf("/loki/api/v1/%s", queryInfo["path"])
-	queryURL, err := url.Parse(e.BaseURL + apiPath)
+	// Form the query URL
+	queryURL, err := url.Parse(fmt.Sprintf("%s/loki/api/v1/%s", e.BaseURL, queryInfo["queryPath"]))
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка формирования URL: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error forming URL: %v", err)
 	}
 
-	// Добавляем параметры запроса
-	q := queryURL.Query()
-	q.Set("query", queryInfo["query"])
-	q.Set("start", queryInfo["start"])
-	q.Set("end", queryInfo["end"])
+	// Add query parameters
+	params := url.Values{}
+	params.Add("query", queryInfo["query"])
+	params.Add("start", queryInfo["start"])
+	params.Add("end", queryInfo["end"])
+	params.Add("limit", queryInfo["limit"])
 
-	// Добавляем лимит для запросов логов
-	if queryInfo["limit"] != "" {
-		q.Set("limit", queryInfo["limit"])
+	// For range queries, add step parameter
+	if queryInfo["queryPath"] == "query_range" {
+		// Random step from 10s to 60s
+		step := strconv.Itoa(10+rand.Intn(51)) + "s"
+		params.Add("step", step)
 	}
 
-	// Для временных рядов добавляем параметр step
-	if queryInfo["path"] == "query_range" {
-		// Устанавливаем step в зависимости от интервала запроса
-		startUnix, _ := strconv.ParseInt(queryInfo["start"], 10, 64)
-		endUnix, _ := strconv.ParseInt(queryInfo["end"], 10, 64)
+	queryURL.RawQuery = params.Encode()
 
-		// Вычисляем интервал в секундах
-		intervalSec := (endUnix - startUnix) / 1e9
-
-		// Определяем шаг как 1/100 от интервала, но не менее 15 секунд и не более 5 минут
-		stepSec := intervalSec / 100
-		if stepSec < 15 {
-			stepSec = 15
-		} else if stepSec > 300 {
-			stepSec = 300
-		}
-
-		q.Set("step", fmt.Sprintf("%ds", stepSec))
-	}
-
-	queryURL.RawQuery = q.Encode()
-
-	// Создаем HTTP-запрос
+	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, "GET", queryURL.String(), nil)
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка создания запроса: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error creating request: %v", err)
 	}
 
-	// Устанавливаем заголовки
+	// Set headers
 	req.Header.Set("Accept", "application/json")
 
-	// Выполняем запрос
+	// Execute the request
 	startTime := time.Now()
 	resp, err := e.Client.Do(req)
 	duration := time.Since(startTime)
 
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка выполнения запроса: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error executing request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Читаем ответ
+	// Read the response
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка чтения ответа: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error reading response: %v", err)
 	}
 
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
-		return models.QueryResult{}, fmt.Errorf("ошибка запроса: код %d, тело: %s", resp.StatusCode, string(body))
+		return models.QueryResult{}, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	// Декодируем ответ
+	// Decode the response
 	var response LokiResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка декодирования ответа: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error decoding response: %v", err)
 	}
 
-	// Подсчитываем количество результатов
-	hitCount := 0
+	// Count the number of results
+	resultCount := 0
 	if response.Data.Result != nil {
-		hitCount = len(response.Data.Result)
+		resultCount = len(response.Data.Result)
 	}
 
-	// Собираем информацию о статистике запроса
-	status := "success"
-	if response.Data.Stats.Summary.ExecTime > 0 {
-		status = fmt.Sprintf("success (%.2f ms, %d bytes processed)",
-			response.Data.Stats.Summary.ExecTime*1000,
-			response.Data.Stats.Summary.TotalBytesProcessed)
-	}
-
-	// Создаем результат
+	// Create the result
 	result := models.QueryResult{
-		Duration:  duration,
-		HitCount:  hitCount,
-		BytesRead: int64(len(body)),
-		Status:    status,
+		Duration:    duration,
+		ResultCount: resultCount,
+		RawResponse: body,
 	}
 
 	return result, nil

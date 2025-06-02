@@ -13,7 +13,7 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
-// ElasticsearchExecutor исполнитель запросов для Elasticsearch
+// ElasticsearchExecutor query executor for Elasticsearch
 type ElasticsearchExecutor struct {
 	BaseURL   string
 	Client    *http.Client
@@ -21,7 +21,7 @@ type ElasticsearchExecutor struct {
 	IndexName string
 }
 
-// ESSearchResponse представляет ответ от Elasticsearch
+// ESSearchResponse represents the response from Elasticsearch
 type ESSearchResponse struct {
 	Took     int  `json:"took"`
 	TimedOut bool `json:"timed_out"`
@@ -36,7 +36,7 @@ type ESSearchResponse struct {
 	Aggregations map[string]interface{} `json:"aggregations,omitempty"`
 }
 
-// ESErrorResponse представляет ошибку от Elasticsearch
+// ESErrorResponse represents an error from Elasticsearch
 type ESErrorResponse struct {
 	Error struct {
 		Type   string `json:"type"`
@@ -45,21 +45,21 @@ type ESErrorResponse struct {
 	Status int `json:"status"`
 }
 
-// Фиксированные ключевые слова для поиска в логах
+// Fixed keywords for searching in logs
 var esQueryPhrases = []string{
 	"error", "warning", "info", "debug", "critical",
 	"failed", "success", "timeout", "exception",
 	"unauthorized", "forbidden", "not found",
 }
 
-// Фиксированные имена полей для поиска
+// Fixed field names for searching
 var esLogFields = []string{
 	"log_type", "host", "container_name", "environment", "datacenter",
 	"version", "level", "message", "service", "remote_addr",
 	"request", "status", "http_referer", "error_code",
 }
 
-// NewElasticsearchExecutor создает новый исполнитель запросов для Elasticsearch
+// NewElasticsearchExecutor creates a new query executor for Elasticsearch
 func NewElasticsearchExecutor(baseURL string, options models.Options) *ElasticsearchExecutor {
 	client := &http.Client{
 		Timeout: options.Timeout,
@@ -69,21 +69,21 @@ func NewElasticsearchExecutor(baseURL string, options models.Options) *Elasticse
 		BaseURL:   baseURL,
 		Client:    client,
 		Options:   options,
-		IndexName: "logs-*", // Используем маску для всех индексов логов
+		IndexName: "logs-*", // Using a mask for all log indices
 	}
 }
 
-// GetSystemName возвращает название системы
+// GetSystemName returns the system name
 func (e *ElasticsearchExecutor) GetSystemName() string {
 	return "elasticsearch"
 }
 
-// ExecuteQuery выполняет запрос указанного типа в Elasticsearch
+// ExecuteQuery executes a query of the specified type in Elasticsearch
 func (e *ElasticsearchExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryType) (models.QueryResult, error) {
-	// Создаем случайный запрос указанного типа
+	// Create a random query of the specified type
 	query := e.GenerateRandomQuery(queryType).(map[string]interface{})
 
-	// Выполняем запрос к Elasticsearch
+	// Execute the query to Elasticsearch
 	result, err := e.executeElasticsearchQuery(ctx, query)
 	if err != nil {
 		return models.QueryResult{}, err
@@ -92,16 +92,16 @@ func (e *ElasticsearchExecutor) ExecuteQuery(ctx context.Context, queryType mode
 	return result, nil
 }
 
-// GenerateRandomQuery создает случайный запрос указанного типа для Elasticsearch
+// GenerateRandomQuery creates a random query of the specified type for Elasticsearch
 func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	// Общий промежуток времени - последние 24 часа
+	// Common time range - last 24 hours
 	now := time.Now()
 	startTime := now.Add(-24 * time.Hour)
 
-	// Для некоторых запросов берем более короткий промежуток времени
+	// For some queries, we take a shorter time range
 	var query map[string]interface{}
 
-	// Базовый фильтр по времени
+	// Basic time filter
 	timeRange := map[string]interface{}{
 		"range": map[string]interface{}{
 			"timestamp": map[string]interface{}{
@@ -113,9 +113,9 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 
 	switch queryType {
 	case models.SimpleQuery:
-		// Простой поиск по одному полю или ключевому слову
+		// Simple search by one field or keyword
 		if rand.Intn(2) == 0 {
-			// Поиск по ключевому слову в сообщении
+			// Search by keyword in message
 			keyword := esQueryPhrases[rand.Intn(len(esQueryPhrases))]
 			query = map[string]interface{}{
 				"query": map[string]interface{}{
@@ -132,7 +132,7 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 				},
 			}
 		} else {
-			// Поиск по конкретному полю
+			// Search by specific field
 			field := esLogFields[rand.Intn(len(esLogFields))]
 			fieldValue := fmt.Sprintf("value%d", rand.Intn(100))
 			query = map[string]interface{}{
@@ -152,19 +152,19 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 		}
 
 	case models.ComplexQuery:
-		// Сложный поиск с несколькими условиями
+		// Complex search with multiple conditions
 		conditions := []interface{}{timeRange}
 
-		// Случайное количество условий от 2 до 4
+		// Random number of conditions from 2 to 4
 		numConditions := 2 + rand.Intn(3)
 		for i := 0; i < numConditions; i++ {
-			// Выбор случайного поля
+			// Select a random field
 			field := esLogFields[rand.Intn(len(esLogFields))]
 
-			// Случайное условие в зависимости от типа поля
+			// Random condition depending on the field type
 			switch field {
 			case "status", "error_code":
-				// Для числовых полей используем диапазон
+				// For numeric fields, use a range
 				min := 100 + rand.Intn(200)
 				max := min + rand.Intn(300)
 
@@ -177,9 +177,9 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 					},
 				})
 			default:
-				// Для строковых полей используем разные типы матчеров
+				// For string fields, use different types of matchers
 				if rand.Intn(3) == 0 {
-					// Точное совпадение
+					// Exact match
 					value := fmt.Sprintf("value%d", rand.Intn(100))
 					conditions = append(conditions, map[string]interface{}{
 						"term": map[string]interface{}{
@@ -187,7 +187,7 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 						},
 					})
 				} else if rand.Intn(2) == 0 {
-					// Полнотекстовый поиск
+					// Full-text search
 					keyword := esQueryPhrases[rand.Intn(len(esQueryPhrases))]
 					conditions = append(conditions, map[string]interface{}{
 						"match": map[string]interface{}{
@@ -195,7 +195,7 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 						},
 					})
 				} else {
-					// Поиск по префиксу
+					// Prefix search
 					prefix := fmt.Sprintf("pref%d", rand.Intn(10))
 					conditions = append(conditions, map[string]interface{}{
 						"prefix": map[string]interface{}{
@@ -206,9 +206,9 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 			}
 		}
 
-		// Объединяем условия с помощью должен/может
-		if rand.Intn(3) < 2 {
-			// В большинстве случаев используем must (AND)
+		// Combine conditions using must/should
+		if rand.Intn(10) < 7 {
+			// In most cases, use must (AND)
 			query = map[string]interface{}{
 				"query": map[string]interface{}{
 					"bool": map[string]interface{}{
@@ -217,12 +217,14 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 				},
 			}
 		} else {
-			// Иногда используем should с minimum_should_match (OR)
+			// Sometimes use should with minimum_should_match (OR)
 			query = map[string]interface{}{
 				"query": map[string]interface{}{
 					"bool": map[string]interface{}{
-						"must":                 []interface{}{timeRange},
-						"should":               conditions[1:], // Первый элемент - timeRange, уже добавлен в must
+						"must": []interface{}{
+							timeRange,
+						},
+						"should":               conditions[1:], // First element - timeRange, already added to must
 						"minimum_should_match": 1,
 					},
 				},
@@ -230,25 +232,27 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 		}
 
 	case models.AnalyticalQuery:
-		// Аналитический запрос с агрегацией
+		// Analytical query with aggregation
 
-		// Выбираем случайное поле для агрегации
+		// Select a random field for aggregation
 		field := esLogFields[rand.Intn(len(esLogFields))]
 
-		// Выбираем случайную функцию агрегации
-		aggregationType := []string{"terms", "histogram"}[rand.Intn(2)]
+		// Select a random aggregation function
+		aggType := []string{"terms", "histogram", "date_histogram"}[rand.Intn(3)]
 
-		// Формируем фильтр
+		// Form the filter
 		filter := map[string]interface{}{
 			"bool": map[string]interface{}{
-				"must": []interface{}{timeRange},
+				"must": []interface{}{
+					timeRange,
+				},
 			},
 		}
 
-		// Добавляем дополнительное условие к фильтру
+		// Add additional condition to the filter
 		if rand.Intn(2) == 0 {
-			// Добавляем условие по уровню лога
-			levels := []string{"info", "warn", "error", "debug", "critical"}
+			// Add condition by log level
+			levels := []string{"info", "warn", "error", "debug", "trace"}
 			level := levels[rand.Intn(len(levels))]
 
 			filter["bool"].(map[string]interface{})["must"] = append(
@@ -260,8 +264,8 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 				},
 			)
 		} else {
-			// Добавляем условие по типу лога
-			logTypes := []string{"web_access", "web_error", "application", "metric", "event"}
+			// Add condition by log type
+			logTypes := []string{"application", "system", "access", "error", "audit"}
 			logType := logTypes[rand.Intn(len(logTypes))]
 
 			filter["bool"].(map[string]interface{})["must"] = append(
@@ -274,55 +278,57 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 			)
 		}
 
-		// Формируем запрос в зависимости от типа агрегации
-		var aggregation map[string]interface{}
+		// Form the query depending on the aggregation type
+		aggs := map[string]interface{}{}
 
-		if aggregationType == "terms" {
-			aggregation = map[string]interface{}{
-				"field_stats": map[string]interface{}{
-					"terms": map[string]interface{}{
-						"field": field,
-						"size":  20,
-					},
+		switch aggType {
+		case "terms":
+			aggs["agg1"] = map[string]interface{}{
+				"terms": map[string]interface{}{
+					"field": field,
+					"size":  10,
 				},
 			}
-		} else {
-			// Для числовых полей
+		case "histogram":
 			if field == "status" || field == "error_code" {
-				aggregation = map[string]interface{}{
-					"field_stats": map[string]interface{}{
-						"histogram": map[string]interface{}{
-							"field":    field,
-							"interval": 50,
-						},
+				// For numeric fields
+				aggs["agg1"] = map[string]interface{}{
+					"histogram": map[string]interface{}{
+						"field":    field,
+						"interval": 50,
 					},
 				}
 			} else {
-				// Для других полей используем date_histogram если не можем использовать histogram
-				aggregation = map[string]interface{}{
-					"time_stats": map[string]interface{}{
-						"date_histogram": map[string]interface{}{
-							"field":    "timestamp",
-							"interval": "1h",
-						},
+				// For other fields use date_histogram if we can't use histogram
+				aggs["agg1"] = map[string]interface{}{
+					"date_histogram": map[string]interface{}{
+						"field":    "timestamp",
+						"interval": "1h",
 					},
 				}
+			}
+		case "date_histogram":
+			aggs["agg1"] = map[string]interface{}{
+				"date_histogram": map[string]interface{}{
+					"field":    "timestamp",
+					"interval": "1h",
+				},
 			}
 		}
 
 		query = map[string]interface{}{
-			"query":        filter,
-			"aggregations": aggregation,
-			"size":         0, // Только агрегации, без документов
+			"query":        map[string]interface{}{"bool": filter},
+			"aggregations": aggs,
+			"size":         0, // Only aggregations, no documents
 		}
 
 	case models.TimeSeriesQuery:
-		// Запрос временных рядов
+		// Time series query
 
-		// Используем более короткий промежуток времени - последние 6 часов
+		// Use a shorter time range - last 6 hours
 		startTime = now.Add(-6 * time.Hour)
 
-		// Обновляем фильтр по времени
+		// Update the time filter
 		timeRange = map[string]interface{}{
 			"range": map[string]interface{}{
 				"timestamp": map[string]interface{}{
@@ -332,17 +338,19 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 			},
 		}
 
-		// Формируем фильтр
+		// Form the filter
 		filter := map[string]interface{}{
 			"bool": map[string]interface{}{
-				"must": []interface{}{timeRange},
+				"must": []interface{}{
+					timeRange,
+				},
 			},
 		}
 
-		// Добавляем дополнительное условие к фильтру
+		// Add additional condition to the filter
 		if rand.Intn(2) == 0 {
-			// Добавляем условие по сервису
-			services := []string{"api", "auth", "frontend", "backend", "database"}
+			// Add condition by service
+			services := []string{"api", "web", "auth", "db", "cache", "queue"}
 			service := services[rand.Intn(len(services))]
 
 			filter["bool"].(map[string]interface{})["must"] = append(
@@ -354,8 +362,8 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 				},
 			)
 		} else {
-			// Добавляем условие по типу лога
-			logTypes := []string{"web_access", "web_error", "application"}
+			// Add condition by log type
+			logTypes := []string{"application", "system", "access", "error", "audit"}
 			logType := logTypes[rand.Intn(len(logTypes))]
 
 			filter["bool"].(map[string]interface{})["must"] = append(
@@ -368,17 +376,35 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 			)
 		}
 
-		// Определяем интервал времени
-		intervals := []string{"5m", "10m", "15m", "30m", "1h"}
+		// Define the time interval
+		intervals := []string{"1m", "5m", "10m", "30m", "1h"}
 		interval := intervals[rand.Intn(len(intervals))]
 
-		// Выбираем поле для анализа
-		fields := []string{"status", "error_code"}
-		field := fields[rand.Intn(len(fields))]
+		// Define metrics to collect
+		metrics := []string{"count", "avg", "max", "min"}
+		metric := metrics[rand.Intn(len(metrics))]
 
-		// Формируем запрос с date_histogram и вложенной агрегацией
+		var metricAgg map[string]interface{}
+
+		if metric == "count" {
+			metricAgg = map[string]interface{}{
+				"value_count": map[string]interface{}{
+					"field": "_index",
+				},
+			}
+		} else {
+			numericFields := []string{"status", "response_time", "error_code", "cpu_usage", "memory_usage"}
+			field := numericFields[rand.Intn(len(numericFields))]
+
+			metricAgg = map[string]interface{}{
+				metric: map[string]interface{}{
+					"field": field,
+				},
+			}
+		}
+
 		query = map[string]interface{}{
-			"query": filter,
+			"query": map[string]interface{}{"bool": filter},
 			"aggregations": map[string]interface{}{
 				"time_buckets": map[string]interface{}{
 					"date_histogram": map[string]interface{}{
@@ -386,89 +412,63 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 						"interval": interval,
 					},
 					"aggregations": map[string]interface{}{
-						"status_stats": map[string]interface{}{
-							"terms": map[string]interface{}{
-								"field": field,
-								"size":  10,
-							},
-						},
+						"metric": metricAgg,
 					},
 				},
 			},
-			"size": 0, // Только агрегации, без документов
+			"size": 0,
 		}
-	}
-
-	// Добавляем размер выборки для неаналитических запросов
-	if queryType == models.SimpleQuery || queryType == models.ComplexQuery {
-		query["size"] = 100
-		query["track_total_hits"] = true
 	}
 
 	return query
 }
 
-// executeElasticsearchQuery выполняет запрос к Elasticsearch
+// executeElasticsearchQuery executes a query to Elasticsearch
 func (e *ElasticsearchExecutor) executeElasticsearchQuery(ctx context.Context, query map[string]interface{}) (models.QueryResult, error) {
-	// Сериализуем запрос в JSON
 	queryJSON, err := json.Marshal(query)
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка сериализации запроса: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error marshaling query: %v", err)
 	}
 
-	// Формируем URL запроса
-	queryURL := fmt.Sprintf("%s/%s/_search", e.BaseURL, e.IndexName)
-
-	// Создаем HTTP-запрос
-	req, err := http.NewRequestWithContext(ctx, "POST", queryURL, bytes.NewBuffer(queryJSON))
+	url := fmt.Sprintf("%s/%s/_search", e.BaseURL, e.IndexName)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(queryJSON))
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка создания запроса: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error creating request: %v", err)
 	}
 
-	// Устанавливаем заголовки
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
 
-	// Выполняем запрос
 	startTime := time.Now()
 	resp, err := e.Client.Do(req)
 	duration := time.Since(startTime)
 
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка выполнения запроса: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error executing request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Читаем ответ
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка чтения ответа: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error reading response: %v", err)
 	}
 
-	// Проверяем код ответа
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= 400 {
 		var errorResp ESErrorResponse
-		if err := json.Unmarshal(body, &errorResp); err == nil {
-			return models.QueryResult{}, fmt.Errorf("ошибка запроса: %s: %s", errorResp.Error.Type, errorResp.Error.Reason)
+		if err := json.Unmarshal(body, &errorResp); err != nil {
+			return models.QueryResult{}, fmt.Errorf("error parsing error response: %v", err)
 		}
-		return models.QueryResult{}, fmt.Errorf("ошибка запроса: код %d, тело: %s", resp.StatusCode, string(body))
+		return models.QueryResult{}, fmt.Errorf("elasticsearch error: %s - %s", errorResp.Error.Type, errorResp.Error.Reason)
 	}
 
-	// Декодируем ответ
-	var response ESSearchResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка декодирования ответа: %v", err)
+	var esResp ESSearchResponse
+	if err := json.Unmarshal(body, &esResp); err != nil {
+		return models.QueryResult{}, fmt.Errorf("error parsing response: %v", err)
 	}
 
-	// Подсчитываем количество результатов
-	hitCount := response.Hits.Total.Value
-
-	// Создаем результат
 	result := models.QueryResult{
-		Duration:  duration,
-		HitCount:  hitCount,
-		BytesRead: int64(len(body)),
-		Status:    fmt.Sprintf("success (%d ms)", response.Took),
+		Duration:    duration,
+		ResultCount: esResp.Hits.Total.Value,
+		RawResponse: body,
 	}
 
 	return result, nil

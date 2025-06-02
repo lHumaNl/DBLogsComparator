@@ -25,66 +25,66 @@ const (
 	systemVictoria = "victoria"
 )
 
-// Параметры командной строки по умолчанию
+// Default command line parameters
 const (
 	defaultConfigPath = "config.yaml"
 	defaultHostsPath  = "db_hosts.yaml"
 )
 
 func main() {
-	// Параметры командной строки
-	configPath := flag.String("config", defaultConfigPath, "Путь к файлу конфигурации YAML")
-	hostsPath := flag.String("hosts", defaultHostsPath, "Путь к файлу с URL-адресами систем логирования")
-	legacyMode := flag.Bool("legacy", false, "Использовать режим аргументов командной строки вместо YAML")
-	defaultConfig := flag.Bool("default-config", false, "Создать конфигурацию по умолчанию и выйти")
+	// Command line parameters
+	configPath := flag.String("config", defaultConfigPath, "Path to YAML configuration file")
+	hostsPath := flag.String("hosts", defaultHostsPath, "Path to file with logging system URLs")
+	legacyMode := flag.Bool("legacy", false, "Use command line arguments mode instead of YAML")
+	defaultConfig := flag.Bool("default-config", false, "Create default configuration and exit")
 
-	// Добавляем новые флаги
-	system := flag.String("system", "", "Система логирования: loki, elasticsearch, victoria (обязательный параметр)")
-	metricsPort := flag.Int("metrics-port", 9090, "Порт для сервера метрик Prometheus")
-	mode := flag.String("mode", "generator", "Режим работы: generator, querier, combined")
+	// Add new flags
+	system := flag.String("system", "", "Logging system: loki, elasticsearch, victoria (required parameter)")
+	metricsPort := flag.Int("metrics-port", 9090, "Port for Prometheus metrics server")
+	mode := flag.String("mode", "generator", "Operation mode: generator, querier, combined")
 
 	flag.Parse()
 
-	// Проверяем наличие обязательного параметра system
+	// Check for required system parameter
 	if *system == "" && !*defaultConfig && !*legacyMode {
-		// Проверяем, есть ли переменная окружения LOG_DB
+		// Check if LOG_DB environment variable exists
 		envSystem := os.Getenv("LOG_DB")
 		if envSystem != "" {
 			*system = envSystem
-			fmt.Printf("Используется система логирования из переменной окружения LOG_DB: %s\n", *system)
+			fmt.Printf("Using logging system from LOG_DB environment variable: %s\n", *system)
 		} else {
-			fmt.Println("Ошибка: не указана система логирования")
-			fmt.Println("Укажите систему с помощью флага -system или переменной окружения LOG_DB")
-			fmt.Println("Доступные системы: loki, elasticsearch, victoria")
+			fmt.Println("Error: logging system not specified")
+			fmt.Println("Specify system using -system flag or LOG_DB environment variable")
+			fmt.Println("Available systems: loki, elasticsearch, victoria")
 			flag.Usage()
 			os.Exit(1)
 		}
 	}
 
-	// Создание конфигурации по умолчанию, если запрошено
+	// Create default configuration if requested
 	if *defaultConfig {
 		config := getDefaultConfig()
 		if err := common.SaveConfig(config, *configPath); err != nil {
-			log.Fatalf("Ошибка создания конфигурации по умолчанию: %v", err)
+			log.Fatalf("Error creating default configuration: %v", err)
 		}
-		fmt.Printf("Конфигурация по умолчанию создана в файле: %s\n", *configPath)
+		fmt.Printf("Default configuration created in file: %s\n", *configPath)
 		return
 	}
 
-	// Определение каталога с текущим исполняемым файлом
+	// Determine directory with current executable
 	execDir, err := filepath.Abs(filepath.Dir(os.Args[0]))
 	if err != nil {
-		log.Fatalf("Не удалось определить текущий каталог: %v", err)
+		log.Fatalf("Failed to determine current directory: %v", err)
 	}
 
-	// Если запрошен режим legacy, используем аргументы командной строки
+	// If legacy mode requested, use command line arguments
 	if *legacyMode {
-		log.Println("Запуск в режиме legacy с использованием аргументов командной строки")
+		log.Println("Starting in legacy mode using command line arguments")
 		runInLegacyMode()
 		return
 	}
 
-	// Загружаем конфигурацию из YAML
+	// Load configuration from YAML
 	configFullPath := *configPath
 	if !filepath.IsAbs(configFullPath) {
 		configFullPath = filepath.Join(execDir, *configPath)
@@ -92,54 +92,54 @@ func main() {
 
 	config, err := common.LoadConfig(configFullPath)
 	if err != nil {
-		// Если файл не существует и это стандартный путь, создаем конфигурацию по умолчанию
+		// If file doesn't exist and it's the default path, create default configuration
 		if os.IsNotExist(err) && *configPath == defaultConfigPath {
-			fmt.Println("Файл конфигурации не найден, создаем конфигурацию по умолчанию")
+			fmt.Println("Configuration file not found, creating default configuration")
 			config = getDefaultConfig()
 			if err := common.SaveConfig(config, configFullPath); err != nil {
-				log.Fatalf("Ошибка создания конфигурации по умолчанию: %v", err)
+				log.Fatalf("Error creating default configuration: %v", err)
 			}
-			fmt.Printf("Конфигурация по умолчанию создана в файле: %s\n", configFullPath)
+			fmt.Printf("Default configuration created in file: %s\n", configFullPath)
 		} else {
-			log.Fatalf("Ошибка загрузки конфигурации: %v", err)
+			log.Fatalf("Error loading configuration: %v", err)
 		}
 	}
 
-	// Устанавливаем систему из командной строки или переменной окружения
+	// Set system from command line or environment variable
 	if *system != "" {
-		// Проверяем, что указана допустимая система
+		// Check that a valid system is specified
 		switch *system {
 		case systemLoki, systemES, systemVictoria:
 			config.System = *system
-			fmt.Printf("Используется система логирования: %s\n", *system)
+			fmt.Printf("Using logging system: %s\n", *system)
 		default:
-			log.Fatalf("Неизвестная система логирования: %s", *system)
+			log.Fatalf("Unknown logging system: %s", *system)
 		}
 	}
 
-	// Проверяем, что система указана
+	// Check that system is specified
 	if config.System == "" {
-		log.Fatalf("Не указана система логирования. Используйте флаг -system или укажите в конфигурационном файле")
+		log.Fatalf("Logging system not specified. Use -system flag or specify in configuration file")
 	}
 
-	// Устанавливаем режим работы из командной строки
+	// Set operation mode from command line
 	if *mode != "" {
-		// Проверяем, что указан допустимый режим
+		// Check that a valid mode is specified
 		switch *mode {
 		case modeGeneratorOnly, modeQuerierOnly, modeCombined:
 			config.Mode = *mode
-			fmt.Printf("Используется режим работы: %s\n", *mode)
+			fmt.Printf("Using operation mode: %s\n", *mode)
 		default:
-			log.Fatalf("Неизвестный режим работы: %s", *mode)
+			log.Fatalf("Unknown operation mode: %s", *mode)
 		}
 	}
 
-	// Устанавливаем порт метрик из командной строки
+	// Set metrics port from command line
 	if *metricsPort != 0 {
 		config.MetricsPort = *metricsPort
 	}
 
-	// Загружаем конфигурацию хостов из файла
+	// Load hosts configuration from file
 	hostsFullPath := *hostsPath
 	if !filepath.IsAbs(hostsFullPath) {
 		hostsFullPath = filepath.Join(execDir, *hostsPath)
@@ -147,11 +147,11 @@ func main() {
 
 	hostsConfig, err := common.LoadHostsConfig(hostsFullPath)
 	if err != nil {
-		log.Printf("Предупреждение: не удалось загрузить файл с хостами: %v", err)
-		log.Printf("Будут использованы URL из основного конфигурационного файла или значения по умолчанию")
+		log.Printf("Warning: failed to load hosts file: %v", err)
+		log.Printf("URLs from main configuration file or default values will be used")
 	} else {
-		// Применяем загруженные URL-адреса к основной конфигурации
-		// В Go структуры не могут быть nil, поэтому проверяем режим работы
+		// Apply loaded URLs to main configuration
+		// In Go, structures cannot be nil, so we check the operation mode
 		if config.Mode == modeGeneratorOnly || config.Mode == modeCombined {
 			config.Generator.URLLoki = hostsConfig.URLLoki
 			config.Generator.URLES = hostsConfig.URLES
@@ -162,40 +162,40 @@ func main() {
 			config.Querier.URLES = hostsConfig.URLES
 			config.Querier.URLVictoria = hostsConfig.URLVictoria
 		}
-		fmt.Printf("Загружены URL-адреса систем из файла: %s\n", hostsFullPath)
+		fmt.Printf("System URLs loaded from file: %s\n", hostsFullPath)
 	}
 
-	// Создаем структуру для статистики
+	// Create structure for statistics
 	stats := &common.Stats{
 		StartTime: time.Now(),
 	}
 
-	// Запускаем нужные компоненты в зависимости от режима
+	// Start required components depending on mode
 	switch config.Mode {
 	case modeGeneratorOnly:
-		fmt.Println("Запуск в режиме генератора логов")
+		fmt.Println("Starting in log generator mode")
 		runGeneratorWithConfig(config, stats)
 	case modeQuerierOnly:
-		fmt.Println("Запуск в режиме клиента запросов")
+		fmt.Println("Starting in query client mode")
 		if err := runQuerierWithConfig(config, stats); err != nil {
-			log.Fatalf("Ошибка при запуске клиента запросов: %v", err)
+			log.Fatalf("Error starting query client: %v", err)
 		}
 	case modeCombined:
-		fmt.Println("Запуск в комбинированном режиме (генератор и запросы)")
+		fmt.Println("Starting in combined mode (generator and queries)")
 		go runGeneratorWithConfig(config, stats)
 		if err := runQuerierWithConfig(config, stats); err != nil {
-			log.Fatalf("Ошибка при запуске клиента запросов: %v", err)
+			log.Fatalf("Error starting query client: %v", err)
 		}
 	default:
-		log.Fatalf("Неизвестный режим работы: %s", config.Mode)
+		log.Fatalf("Unknown operation mode: %s", config.Mode)
 	}
 }
 
-// Создание конфигурации по умолчанию
+// Create default configuration
 func getDefaultConfig() *common.Config {
 	return &common.Config{
 		Mode:            "generator",
-		System:          "", // Должно быть указано через CLI или переменную окружения
+		System:          "", // Must be specified via CLI or environment variable
 		DurationSeconds: 60,
 		Metrics:         true,
 		MetricsPort:     9090,
@@ -237,48 +237,48 @@ func getDefaultConfig() *common.Config {
 	}
 }
 
-// Запуск в режиме аргументов командной строки (legacy)
+// Running in command line arguments mode (legacy)
 func runInLegacyMode() {
-	// Основные флаги
-	mode := flag.String("mode", "generator", "Режим работы: generator (только генерация), querier (только запросы), combined (генерация и запросы)")
-	system := flag.String("system", "victoria", "Система логирования: loki, elasticsearch, victoria")
+	// Main flags
+	mode := flag.String("mode", "generator", "Operation mode: generator (generation only), querier (queries only), combined (generation and queries)")
+	system := flag.String("system", "victoria", "Logging system: loki, elasticsearch, victoria")
 
-	// Общие параметры
-	duration := flag.Int("duration", 60, "Длительность работы (в секундах, 0 = бесконечно)")
+	// Common parameters
+	duration := flag.Int("duration", 60, "Operation duration (in seconds, 0 = infinite)")
 
-	// Параметры для режима генерации
-	rps := flag.Int("rps", 100, "Запросов в секунду (для генератора)")
-	bulkSize := flag.Int("bulk-size", 10, "Количество логов в одном запросе")
-	workerCount := flag.Int("worker-count", 4, "Количество параллельных воркеров")
-	connectionCount := flag.Int("connection-count", 10, "Количество соединений")
-	maxRetries := flag.Int("max-retries", 3, "Максимальное количество повторных попыток")
-	retryDelay := flag.Int("retry-delay", 500, "Задержка между повторными попытками (в миллисекундах)")
-	verbose := flag.Bool("verbose", false, "Подробный вывод")
+	// Parameters for generation mode
+	rps := flag.Int("rps", 100, "Requests per second (for generator)")
+	bulkSize := flag.Int("bulk-size", 10, "Number of logs in one request")
+	workerCount := flag.Int("worker-count", 4, "Number of parallel workers")
+	connectionCount := flag.Int("connection-count", 10, "Number of connections")
+	maxRetries := flag.Int("max-retries", 3, "Maximum number of retry attempts")
+	retryDelay := flag.Int("retry-delay", 500, "Delay between retry attempts (in milliseconds)")
+	verbose := flag.Bool("verbose", false, "Verbose output")
 
-	// Веса типов логов
-	webAccessWeight := flag.Int("web-access-weight", 60, "Вес логов типа web_access")
-	webErrorWeight := flag.Int("web-error-weight", 10, "Вес логов типа web_error")
-	applicationWeight := flag.Int("application-weight", 20, "Вес логов типа application")
-	eventWeight := flag.Int("event-weight", 5, "Вес логов типа event")
-	metricWeight := flag.Int("metric-weight", 5, "Вес логов типа metric")
+	// Log type weights
+	webAccessWeight := flag.Int("web-access-weight", 60, "Weight of web_access logs")
+	webErrorWeight := flag.Int("web-error-weight", 10, "Weight of web_error logs")
+	applicationWeight := flag.Int("application-weight", 20, "Weight of application logs")
+	eventWeight := flag.Int("event-weight", 5, "Weight of event logs")
+	metricWeight := flag.Int("metric-weight", 5, "Weight of metric logs")
 
-	// Параметры для режима запросов
-	qps := flag.Int("qps", 10, "Запросов в секунду (для клиента запросов)")
+	// Parameters for query mode
+	qps := flag.Int("qps", 10, "Queries per second (for query client)")
 
-	// Веса типов запросов
-	exactMatchWeight := flag.Int("exact-match-weight", 30, "Вес запросов типа exact_match")
-	timeRangeWeight := flag.Int("time-range-weight", 40, "Вес запросов типа time_range")
-	labelFilterWeight := flag.Int("label-filter-weight", 20, "Вес запросов типа label_filter")
-	complexQueryWeight := flag.Int("complex-query-weight", 10, "Вес запросов типа complex_query")
+	// Query type weights
+	exactMatchWeight := flag.Int("exact-match-weight", 30, "Weight of exact_match queries")
+	timeRangeWeight := flag.Int("time-range-weight", 40, "Weight of time_range queries")
+	labelFilterWeight := flag.Int("label-filter-weight", 20, "Weight of label_filter queries")
+	complexQueryWeight := flag.Int("complex-query-weight", 10, "Weight of complex_query queries")
 
-	// Параметры метрик
-	metricsEnabled := flag.Bool("enable-metrics", true, "Включить метрики Prometheus")
-	metricsPort := flag.Int("metrics-port", 9090, "Порт для сервера метрик Prometheus")
+	// Metrics parameters
+	metricsEnabled := flag.Bool("enable-metrics", true, "Enable Prometheus metrics")
+	metricsPort := flag.Int("metrics-port", 9090, "Port for Prometheus metrics server")
 
-	// Повторный разбор флагов, так как они уже были разобраны выше
+	// Re-parse flags, as they were already parsed above
 	flag.CommandLine.Parse(os.Args[1:])
 
-	// Создаем конфигурацию на основе аргументов командной строки
+	// Create configuration based on command line arguments
 	config := &common.Config{
 		Mode:            *mode,
 		System:          *system,
@@ -322,29 +322,29 @@ func runInLegacyMode() {
 		},
 	}
 
-	// Создаем структуру для статистики
+	// Create structure for statistics
 	stats := &common.Stats{
 		StartTime: time.Now(),
 	}
 
-	// Запускаем нужные компоненты в зависимости от режима
+	// Start required components depending on mode
 	switch *mode {
 	case modeGeneratorOnly:
-		fmt.Println("Запуск в режиме генератора логов (legacy)")
+		fmt.Println("Starting in log generator mode (legacy)")
 		runGeneratorWithConfig(config, stats)
 	case modeQuerierOnly:
-		fmt.Println("Запуск в режиме клиента запросов (legacy)")
+		fmt.Println("Starting in query client mode (legacy)")
 		runQuerierWithConfig(config, stats)
 	case modeCombined:
-		fmt.Println("Запуск в комбинированном режиме - генератор и запросы (legacy)")
+		fmt.Println("Starting in combined mode - generator and queries (legacy)")
 		go runGeneratorWithConfig(config, stats)
 		runQuerierWithConfig(config, stats)
 	default:
-		log.Fatalf("Неизвестный режим работы: %s", *mode)
+		log.Fatalf("Unknown operation mode: %s", *mode)
 	}
 }
 
-// Функция запуска генератора логов с новой конфигурацией
+// Function to start log generator with new configuration
 func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 	generatorConfig := generator.Config{
 		Mode:                "default",
@@ -363,16 +363,16 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 		MetricsPort:         cfg.MetricsPort,
 	}
 
-	// Включаем метрики, если нужно
+	// Enable metrics, if needed
 	if cfg.Metrics {
 		generator.InitPrometheus(generatorConfig)
 		generator.StartMetricsServer(cfg.MetricsPort, generatorConfig)
 	}
 
-	// Создаем клиент базы данных логов
+	// Create database client
 	options := logdb.Options{
 		BatchSize:  generatorConfig.BulkSize,
-		Timeout:    30 * time.Second, // Таймаут запросов
+		Timeout:    30 * time.Second, // Request timeout
 		RetryCount: generatorConfig.MaxRetries,
 		RetryDelay: generatorConfig.RetryDelay,
 		Verbose:    generatorConfig.Verbose,
@@ -380,22 +380,22 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 
 	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.URL, options)
 	if err != nil {
-		log.Fatalf("Ошибка создания клиента базы данных: %v", err)
+		log.Fatalf("Error creating database client: %v", err)
 	}
 
-	fmt.Printf("[Генератор] Запуск с RPS=%d, система=%s\n", cfg.Generator.RPS, cfg.System)
+	fmt.Printf("[Generator] Starting with RPS=%d, system=%s\n", cfg.Generator.RPS, cfg.System)
 
-	// Запускаем генератор
+	// Start generator
 	if err := generator.RunGenerator(generatorConfig, db); err != nil {
-		log.Fatalf("Ошибка при запуске генератора: %v", err)
+		log.Fatalf("Error starting generator: %v", err)
 	}
 }
 
-// runQuerierWithConfig запускает клиент запросов с новой конфигурацией из YAML
+// runQuerierWithConfig starts the query client with new configuration from YAML
 func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
-	log.Printf("Запуск клиента запросов для системы %s\n", config.System)
+	log.Printf("Starting query client for system %s\n", config.System)
 
-	// Определяем URL для выбранной системы
+	// Determine URL for selected system
 	var baseURL string
 	switch config.System {
 	case "victorialogs", "victoria":
@@ -405,24 +405,24 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 	case "loki":
 		baseURL = config.Querier.URLLoki
 	default:
-		return fmt.Errorf("неизвестная система логирования: %s", config.System)
+		return fmt.Errorf("unknown logging system: %s", config.System)
 	}
 
-	// Создаем опции для исполнителя запросов
+	// Create options for query executor
 	options := models.Options{
-		Timeout:    10 * time.Second, // По умолчанию 10 секунд
+		Timeout:    10 * time.Second, // Default 10 seconds
 		RetryCount: config.Querier.MaxRetries,
 		RetryDelay: time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:    config.Querier.Verbose,
 	}
 
-	// Создаем исполнитель запросов для выбранной системы
+	// Create query executor for selected system
 	executor, err := go_querier.CreateQueryExecutor(config.System, baseURL, options)
 	if err != nil {
-		return fmt.Errorf("ошибка создания исполнителя запросов: %v", err)
+		return fmt.Errorf("error creating query executor: %v", err)
 	}
 
-	// Создаем конфигурацию для модуля запросов
+	// Create configuration for query module
 	queryConfig := go_querier.QueryConfig{
 		Mode:            config.System,
 		BaseURL:         baseURL,
@@ -435,14 +435,14 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 			models.AnalyticalQuery: config.Querier.Distribution["analytical"],
 			models.TimeSeriesQuery: config.Querier.Distribution["timeseries"],
 		},
-		QueryTimeout: 10 * time.Second, // По умолчанию 10 секунд
+		QueryTimeout: 10 * time.Second, // Default 10 seconds
 		MaxRetries:   config.Querier.MaxRetries,
 		RetryDelayMs: config.Querier.RetryDelayMs,
 		Verbose:      config.Querier.Verbose,
 	}
 
-	log.Printf("[Запросы] Запуск с QPS=%d, система=%s\n", config.Querier.RPS, config.System)
+	log.Printf("[Queries] Starting with QPS=%d, system=%s\n", config.Querier.RPS, config.System)
 
-	// Запускаем модуль запросов
+	// Start query module
 	return go_querier.RunQuerier(queryConfig, executor, stats)
 }

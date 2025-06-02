@@ -14,7 +14,7 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
-// VictoriaLogsExecutor исполнитель запросов для VictoriaLogs
+// VictoriaLogsExecutor is a query executor for VictoriaLogs
 type VictoriaLogsExecutor struct {
 	BaseURL    string
 	Client     *http.Client
@@ -22,7 +22,7 @@ type VictoriaLogsExecutor struct {
 	SearchPath string
 }
 
-// VictoriaLogsResponse представляет ответ от VictoriaLogs
+// VictoriaLogsResponse represents the response from VictoriaLogs
 type VictoriaLogsResponse struct {
 	Status    string       `json:"status"`
 	Data      VictoriaData `json:"data"`
@@ -30,34 +30,34 @@ type VictoriaLogsResponse struct {
 	Error     string       `json:"error,omitempty"`
 }
 
-// VictoriaData представляет данные ответа VictoriaLogs
+// VictoriaData represents the data in VictoriaLogs response
 type VictoriaData struct {
 	Result     []VictoriaResult `json:"result"`
 	ResultType string           `json:"resultType"`
 }
 
-// VictoriaResult представляет результат запроса VictoriaLogs
+// VictoriaResult represents the result of a VictoriaLogs query
 type VictoriaResult struct {
 	Metric map[string]string `json:"metric"`
 	Values [][]interface{}   `json:"values,omitempty"`
 	Value  []interface{}     `json:"value,omitempty"`
 }
 
-// Фиксированные ключевые слова для поиска в логах
+// Fixed keywords for searching in logs
 var victoriaPhrases = []string{
 	"error", "warning", "info", "debug", "critical",
 	"failed", "success", "timeout", "exception",
 	"unauthorized", "forbidden", "not found",
 }
 
-// Фиксированные имена полей для поиска
+// Fixed field names for searching
 var victoriaLogFields = []string{
 	"log_type", "host", "container_name", "environment", "datacenter",
 	"version", "level", "message", "service", "remote_addr",
 	"request", "status", "http_referer", "error_code",
 }
 
-// NewVictoriaLogsExecutor создает новый исполнитель запросов для VictoriaLogs
+// NewVictoriaLogsExecutor creates a new query executor for VictoriaLogs
 func NewVictoriaLogsExecutor(baseURL string, options models.Options) *VictoriaLogsExecutor {
 	client := &http.Client{
 		Timeout: options.Timeout,
@@ -71,17 +71,17 @@ func NewVictoriaLogsExecutor(baseURL string, options models.Options) *VictoriaLo
 	}
 }
 
-// GetSystemName возвращает название системы
+// GetSystemName returns the system name
 func (e *VictoriaLogsExecutor) GetSystemName() string {
 	return "victorialogs"
 }
 
-// ExecuteQuery выполняет запрос указанного типа в VictoriaLogs
+// ExecuteQuery executes a query of the specified type in VictoriaLogs
 func (e *VictoriaLogsExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryType) (models.QueryResult, error) {
-	// Создаем случайный запрос указанного типа
+	// Create a random query of the specified type
 	query := e.GenerateRandomQuery(queryType).(string)
 
-	// Выполняем запрос к VictoriaLogs
+	// Execute the query to VictoriaLogs
 	result, err := e.executeVictoriaLogsQuery(ctx, query)
 	if err != nil {
 		return models.QueryResult{}, err
@@ -90,67 +90,67 @@ func (e *VictoriaLogsExecutor) ExecuteQuery(ctx context.Context, queryType model
 	return result, nil
 }
 
-// GenerateRandomQuery создает случайный запрос указанного типа для VictoriaLogs
+// GenerateRandomQuery creates a random query of the specified type for VictoriaLogs
 func (e *VictoriaLogsExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	// Общий промежуток времени - последние 24 часа
+	// Common time range - last 24 hours
 	now := time.Now()
 	startTime := now.Add(-24 * time.Hour)
 
-	// Для некоторых запросов берем более короткий промежуток времени
+	// For some queries, we take a shorter time range
 	var query string
 
 	switch queryType {
 	case models.SimpleQuery:
-		// Простой поиск по одному полю или ключевому слову
+		// Simple search by one field or keyword
 		if rand.Intn(2) == 0 {
-			// Поиск по ключевому слову
+			// Search by keyword
 			keyword := victoriaPhrases[rand.Intn(len(victoriaPhrases))]
 			query = fmt.Sprintf("message=~%q", keyword)
 		} else {
-			// Поиск по конкретному полю
+			// Search by specific field
 			field := victoriaLogFields[rand.Intn(len(victoriaLogFields))]
 			fieldValue := fmt.Sprintf("value%d", rand.Intn(100))
 			query = fmt.Sprintf("%s=%q", field, fieldValue)
 		}
 
 	case models.ComplexQuery:
-		// Сложный поиск с несколькими условиями
+		// Complex search with multiple conditions
 		conditions := []string{}
 
-		// Случайное количество условий от 2 до 4
+		// Random number of conditions from 2 to 4
 		numConditions := 2 + rand.Intn(3)
 		for i := 0; i < numConditions; i++ {
-			// Выбор случайного поля
+			// Select a random field
 			field := victoriaLogFields[rand.Intn(len(victoriaLogFields))]
 
-			// Случайное условие в зависимости от типа поля
+			// Random condition depending on field type
 			switch field {
 			case "status", "error_code":
-				// Для числовых полей используем операторы сравнения
+				// For numeric fields, use comparison operators
 				op := []string{"=", "!=", ">", "<"}[rand.Intn(4)]
 				value := 100 + rand.Intn(500)
 				conditions = append(conditions, fmt.Sprintf("%s%s%d", field, op, value))
 			default:
-				// Для строковых полей используем оператор соответствия
+				// For string fields, use matching operators
 				if rand.Intn(2) == 0 {
-					// Точное совпадение
+					// Exact match
 					value := fmt.Sprintf("value%d", rand.Intn(100))
 					conditions = append(conditions, fmt.Sprintf("%s=%q", field, value))
 				} else {
-					// Регулярное выражение
+					// Regular expression
 					keyword := victoriaPhrases[rand.Intn(len(victoriaPhrases))]
 					conditions = append(conditions, fmt.Sprintf("%s=~%q", field, keyword))
 				}
 			}
 		}
 
-		// Объединяем условия с помощью операторов AND и OR
+		// Combine conditions using AND and OR operators
 		for i := 0; i < len(conditions)-1; i++ {
 			if rand.Intn(3) < 2 {
-				// В большинстве случаев используем AND
+				// In most cases, use AND
 				conditions[i] = conditions[i] + " AND "
 			} else {
-				// Иногда используем OR
+				// Sometimes use OR
 				conditions[i] = conditions[i] + " OR "
 			}
 		}
@@ -158,30 +158,30 @@ func (e *VictoriaLogsExecutor) GenerateRandomQuery(queryType models.QueryType) i
 		query = strings.Join(conditions, "")
 
 	case models.AnalyticalQuery:
-		// Аналитический запрос с агрегацией
-		// Для VictoriaLogs используем возможности LogsQL
+		// Analytical query with aggregation
+		// For VictoriaLogs, we use LogsQL capabilities
 
-		// Выбираем случайное поле для агрегации
+		// Select a random field for aggregation
 		field := victoriaLogFields[rand.Intn(len(victoriaLogFields))]
 
-		// Выбираем случайную функцию агрегации
+		// Select a random aggregation function
 		aggregation := []string{"count", "count_distinct"}[rand.Intn(2)]
 
-		// Формируем условие фильтрации
+		// Form a filtering condition
 		condition := ""
 		if rand.Intn(2) == 0 {
-			// Добавляем условие по уровню лога
+			// Add condition by log level
 			levels := []string{"info", "warn", "error", "debug", "critical"}
 			level := levels[rand.Intn(len(levels))]
 			condition = fmt.Sprintf("level=%q", level)
 		} else {
-			// Добавляем условие по типу лога
+			// Add condition by log type
 			logTypes := []string{"web_access", "web_error", "application", "metric", "event"}
 			logType := logTypes[rand.Intn(len(logTypes))]
 			condition = fmt.Sprintf("log_type=%q", logType)
 		}
 
-		// Формируем запрос в зависимости от типа агрегации
+		// Form the query depending on the aggregation type
 		if aggregation == "count" {
 			query = fmt.Sprintf("count() by (%s) where %s", field, condition)
 		} else {
@@ -189,100 +189,110 @@ func (e *VictoriaLogsExecutor) GenerateRandomQuery(queryType models.QueryType) i
 		}
 
 	case models.TimeSeriesQuery:
-		// Запрос временных рядов
-		// Для VictoriaLogs используем интервалы времени
+		// Time series query
+		// For VictoriaLogs, we use time intervals
 
-		// Используем более короткий промежуток времени - последние 6 часов
+		// Use a shorter time range - last 6 hours
 		startTime = now.Add(-6 * time.Hour)
 
-		// Выбираем случайное поле для анализа временных рядов
+		// Select a random field for time series analysis
 		field := []string{"status", "error_code"}[rand.Intn(2)]
 
-		// Формируем условие фильтрации
+		// Form a filtering condition
 		condition := ""
 		if rand.Intn(2) == 0 {
-			// Добавляем условие по сервису
-			services := []string{"api", "auth", "frontend", "backend", "database"}
-			service := services[rand.Intn(len(services))]
-			condition = fmt.Sprintf("service=%q", service)
+			// Add condition by log level
+			levels := []string{"info", "warn", "error", "debug", "critical"}
+			level := levels[rand.Intn(len(levels))]
+			condition = fmt.Sprintf("level=%q", level)
 		} else {
-			// Добавляем условие по типу лога
-			logTypes := []string{"web_access", "web_error", "application"}
+			// Add condition by log type
+			logTypes := []string{"web_access", "web_error", "application", "metric", "event"}
 			logType := logTypes[rand.Intn(len(logTypes))]
 			condition = fmt.Sprintf("log_type=%q", logType)
 		}
 
-		// Определяем интервал времени (в минутах)
-		intervals := []int{5, 10, 15, 30, 60}
-		interval := intervals[rand.Intn(len(intervals))]
+		// Form the time series query with time interval
+		// VictoriaLogs uses the _time field for time filtering
+		timeStart := fmt.Sprintf("_time>=%d", startTime.Unix())
+		timeEnd := fmt.Sprintf("_time<=%d", now.Unix())
 
-		// Формируем запрос с интервалом
-		query = fmt.Sprintf("count() by (%s) where %s __interval=%dm", field, condition, interval)
+		// Form the complete query with time conditions
+		if condition != "" {
+			query = fmt.Sprintf("count() by (%s) where %s AND %s AND %s", field, condition, timeStart, timeEnd)
+		} else {
+			query = fmt.Sprintf("count() by (%s) where %s AND %s", field, timeStart, timeEnd)
+		}
 	}
 
-	// Добавляем временной диапазон, если запрос не аналитический (там уже есть условие)
-	if queryType != models.AnalyticalQuery {
-		timeRange := fmt.Sprintf(" __timeFilter(time, %d, %d)", startTime.Unix(), now.Unix())
-		query += timeRange
+	// Add time filter for queries that don't already have it
+	if !strings.Contains(query, "_time") {
+		timeFilter := fmt.Sprintf(" _time>=%d AND _time<=%d", startTime.Unix(), now.Unix())
+		if strings.Contains(query, "where") {
+			query = strings.Replace(query, "where", "where"+timeFilter+" AND", 1)
+		} else {
+			query = query + " where" + timeFilter
+		}
 	}
 
 	return query
 }
 
-// executeVictoriaLogsQuery выполняет запрос к VictoriaLogs
+// executeVictoriaLogsQuery executes a query to VictoriaLogs
 func (e *VictoriaLogsExecutor) executeVictoriaLogsQuery(ctx context.Context, query string) (models.QueryResult, error) {
-	// Формируем URL запроса
-	queryURL := fmt.Sprintf("%s%s", e.BaseURL, e.SearchPath)
-
-	// Создаем параметры запроса
-	params := url.Values{}
-	params.Set("query", query)
-
-	// Создаем HTTP-запрос
-	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
+	// Form the query URL
+	queryURL, err := url.Parse(e.BaseURL + e.SearchPath)
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка создания запроса: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error forming URL: %v", err)
 	}
 
-	// Устанавливаем параметры запроса
-	req.URL.RawQuery = params.Encode()
+	// Add query parameters
+	params := url.Values{}
+	params.Add("query", query)
+	queryURL.RawQuery = params.Encode()
 
-	// Устанавливаем заголовки
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", queryURL.String(), nil)
+	if err != nil {
+		return models.QueryResult{}, fmt.Errorf("error creating request: %v", err)
+	}
+
+	// Set headers
 	req.Header.Set("Accept", "application/json")
 
-	// Выполняем запрос
+	// Execute the request
 	startTime := time.Now()
 	resp, err := e.Client.Do(req)
 	duration := time.Since(startTime)
 
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка выполнения запроса: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error executing request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Читаем ответ
+	// Read the response
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка чтения ответа: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error reading response: %v", err)
 	}
 
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
-		return models.QueryResult{}, fmt.Errorf("ошибка запроса: код %d, тело: %s", resp.StatusCode, string(body))
+		return models.QueryResult{}, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	// Декодируем ответ
+	// Decode the response
 	var response VictoriaLogsResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return models.QueryResult{}, fmt.Errorf("ошибка декодирования ответа: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error decoding response: %v", err)
 	}
 
-	// Проверяем статус ответа
-	if response.Status != "success" {
-		return models.QueryResult{}, fmt.Errorf("ошибка запроса: %s", response.Error)
+	// Check for errors in the response
+	if response.Status == "error" {
+		return models.QueryResult{}, fmt.Errorf("query error: %s: %s", response.ErrorType, response.Error)
 	}
 
-	// Подсчитываем количество результатов
+	// Count the number of results
 	hitCount := 0
 	for _, result := range response.Data.Result {
 		if len(result.Values) > 0 {
@@ -292,7 +302,7 @@ func (e *VictoriaLogsExecutor) executeVictoriaLogsQuery(ctx context.Context, que
 		}
 	}
 
-	// Создаем результат
+	// Create the result
 	result := models.QueryResult{
 		Duration:  duration,
 		HitCount:  hitCount,

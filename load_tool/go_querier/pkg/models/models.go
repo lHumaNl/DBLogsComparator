@@ -17,10 +17,12 @@ const (
 
 // QueryResult represents the result of a query execution
 type QueryResult struct {
-	Duration  time.Duration // Execution time
-	HitCount  int           // Number of documents found
-	BytesRead int64         // Number of bytes read
-	Status    string        // Query status
+	Duration    time.Duration // Execution time
+	HitCount    int           // Number of documents found
+	ResultCount int           // Number of results (alias for HitCount for compatibility)
+	BytesRead   int64         // Number of bytes read
+	Status      string        // Query status
+	RawResponse []byte        // Raw response data
 }
 
 // QueryExecutor interface for executing queries

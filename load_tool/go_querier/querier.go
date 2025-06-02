@@ -13,37 +13,37 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
-// QueryType определяет тип запроса
+// QueryType defines the type of query
 type QueryType string
 
 const (
-	SimpleQuery     QueryType = "simple"     // Простой поиск по ключевому слову или полю
-	ComplexQuery    QueryType = "complex"    // Сложный поиск с несколькими условиями
-	AnalyticalQuery QueryType = "analytical" // Запрос с агрегациями
-	TimeSeriesQuery QueryType = "timeseries" // Запрос временных рядов
+	SimpleQuery     QueryType = "simple"     // Simple search by keyword or field
+	ComplexQuery    QueryType = "complex"    // Complex search with multiple conditions
+	AnalyticalQuery QueryType = "analytical" // Query with aggregations
+	TimeSeriesQuery QueryType = "timeseries" // Time series query
 )
 
-// QueryResult представляет результат выполнения запроса
+// QueryResult represents the result of executing a query
 type QueryResult struct {
-	Duration  time.Duration // Время выполнения
-	HitCount  int           // Количество найденных документов
-	BytesRead int64         // Количество прочитанных байт
-	Status    string        // Статус запроса
+	Duration  time.Duration // Execution time
+	HitCount  int           // Number of documents found
+	BytesRead int64         // Number of bytes read
+	Status    string        // Query status
 }
 
-// QueryExecutor интерфейс для выполнения запросов
+// QueryExecutor interface for executing queries
 type QueryExecutor interface {
-	// ExecuteQuery выполняет запрос указанного типа и возвращает результат
+	// ExecuteQuery executes a query of the specified type and returns the result
 	ExecuteQuery(ctx context.Context, queryType QueryType) (QueryResult, error)
 
-	// GenerateRandomQuery создает случайный запрос указанного типа
+	// GenerateRandomQuery creates a random query of the specified type
 	GenerateRandomQuery(queryType QueryType) interface{}
 
-	// GetSystemName возвращает название системы
+	// GetSystemName returns the name of the system
 	GetSystemName() string
 }
 
-// Options настройки для исполнителя запросов
+// Options settings for the query executor
 type Options struct {
 	Timeout    time.Duration
 	RetryCount int
@@ -51,7 +51,7 @@ type Options struct {
 	Verbose    bool
 }
 
-// QueryConfig конфигурация для модуля запросов
+// QueryConfig configuration for the query module
 type QueryConfig struct {
 	Mode                  string
 	BaseURL               string
@@ -65,20 +65,20 @@ type QueryConfig struct {
 	Verbose               bool
 }
 
-// Duration возвращает время работы в формате time.Duration
+// Duration returns the working time in time.Duration format
 func (q *QueryConfig) Duration() time.Duration {
 	if q.DurationSeconds <= 0 {
-		return 0 // бесконечная работа
+		return 0 // infinite operation
 	}
 	return time.Duration(q.DurationSeconds) * time.Second
 }
 
-// RetryDelay возвращает задержку между повторами в формате time.Duration
+// RetryDelay returns the delay between retries in time.Duration format
 func (q *QueryConfig) RetryDelay() time.Duration {
 	return time.Duration(q.RetryDelayMs) * time.Millisecond
 }
 
-// Worker представляет рабочую горутину
+// Worker represents a worker goroutine
 type Worker struct {
 	ID        int
 	Jobs      <-chan struct{}
@@ -88,7 +88,7 @@ type Worker struct {
 	WaitGroup *sync.WaitGroup
 }
 
-// CreateQueryExecutor создает исполнитель запросов для указанной системы
+// CreateQueryExecutor creates a query executor for the specified system
 func CreateQueryExecutor(mode, baseURL string, options models.Options) (models.QueryExecutor, error) {
 	switch mode {
 	case "victoria":
@@ -98,17 +98,17 @@ func CreateQueryExecutor(mode, baseURL string, options models.Options) (models.Q
 	case "loki":
 		return executors.NewLokiExecutor(baseURL, options), nil
 	default:
-		return nil, errors.New(fmt.Sprintf("неизвестная система логирования: %s", mode))
+		return nil, errors.New(fmt.Sprintf("unknown logging system: %s", mode))
 	}
 }
 
-// RunQuerier запускает модуль запросов
+// RunQuerier starts the query module
 func RunQuerier(config QueryConfig, executor models.QueryExecutor, stats *common.Stats) error {
-	// Инициализация каналов и горутин
+	// Initialize channels and goroutines
 	jobs := make(chan struct{}, config.QPS*2)
 	stopChan := make(chan struct{})
 
-	// Запуск рабочих горутин
+	// Start worker goroutines
 	var wg sync.WaitGroup
 	for w := 1; w <= config.WorkerCount; w++ {
 		wg.Add(1)
@@ -123,7 +123,7 @@ func RunQuerier(config QueryConfig, executor models.QueryExecutor, stats *common
 		go runWorker(worker)
 	}
 
-	// Основной цикл генерации нагрузки
+	// Main load generation loop
 	tickInterval := time.Second / time.Duration(config.QPS)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -142,42 +142,42 @@ func RunQuerier(config QueryConfig, executor models.QueryExecutor, stats *common
 	return nil
 }
 
-// runWorker запускает рабочую горутину
+// runWorker starts a worker goroutine
 func runWorker(worker Worker) {
 	defer worker.WaitGroup.Done()
 
 	ctx := context.Background()
 
 	for range worker.Jobs {
-		// Выбираем случайный тип запроса на основе распределения
+		// Select a random query type based on distribution
 		queryType := selectRandomQueryType(worker.Config.QueryTypeDistribution)
 
-		// Инкрементируем общий счетчик запросов
+		// Increment the total query counter
 		worker.Stats.IncrementTotalQueries()
 		common.IncrementReadRequests()
 		common.OperationCounter.WithLabelValues("query", worker.Executor.GetSystemName()).Inc()
 
-		// Создаем контекст с таймаутом
+		// Create a context with timeout
 		queryCtx, cancel := context.WithTimeout(ctx, worker.Config.QueryTimeout)
 
-		// Выполняем запрос
+		// Execute the query
 		startTime := time.Now()
 		result, err := worker.Executor.ExecuteQuery(queryCtx, queryType)
 		duration := time.Since(startTime)
 
-		// Отменяем контекст
+		// Cancel the context
 		cancel()
 
-		// Обновляем метрики
+		// Update metrics
 		common.ReadDurationHistogram.Observe(duration.Seconds())
 		common.QueryTypeCounter.WithLabelValues(string(queryType)).Inc()
 
-		// Обновляем счетчики в зависимости от результата
+		// Update counters based on the result
 		if err != nil {
 			worker.Stats.IncrementFailedQueries()
 			common.IncrementFailedRead()
 
-			// Если ошибка не связана с таймаутом или контекстом, повторяем запрос
+			// If the error is not related to timeout or context, retry the query
 			if err != context.DeadlineExceeded && err != context.Canceled {
 				for i := 0; i < worker.Config.MaxRetries; i++ {
 					worker.Stats.IncrementRetriedQueries()
@@ -185,21 +185,21 @@ func runWorker(worker Worker) {
 
 					time.Sleep(worker.Config.RetryDelay())
 
-					// Создаем новый контекст для повторного запроса
+					// Create a new context for the retry
 					retryCtx, retryCancel := context.WithTimeout(ctx, worker.Config.QueryTimeout)
 
-					// Повторяем запрос
+					// Retry the query
 					retryStartTime := time.Now()
 					result, err = worker.Executor.ExecuteQuery(retryCtx, queryType)
 					retryDuration := time.Since(retryStartTime)
 
-					// Отменяем контекст
+					// Cancel the context
 					retryCancel()
 
-					// Обновляем метрики
+					// Update metrics
 					common.ReadDurationHistogram.Observe(retryDuration.Seconds())
 
-					// Если запрос успешен, прерываем цикл повторений
+					// If the query is successful, break the retry loop
 					if err == nil {
 						break
 					}
@@ -207,50 +207,50 @@ func runWorker(worker Worker) {
 			}
 		}
 
-		// Если запрос в итоге успешен, обновляем счетчики
+		// If the query is ultimately successful, update counters
 		if err == nil {
 			worker.Stats.IncrementSuccessfulQueries()
 			common.IncrementSuccessfulRead()
 
-			// Обновляем статистику по результатам
+			// Update statistics based on results
 			worker.Stats.AddHits(result.HitCount)
 			worker.Stats.AddBytesRead(result.BytesRead)
 
-			// Обновляем метрики Prometheus
+			// Update Prometheus metrics
 			common.ResultHitsHistogram.Observe(float64(result.HitCount))
 			common.ResultSizeHistogram.Observe(float64(result.BytesRead))
 
-			// Вывод информации о запросе, если включен подробный режим
+			// Output query information if verbose mode is enabled
 			if worker.Config.Verbose {
-				fmt.Printf("[Worker %d] Запрос %s: найдено %d записей, прочитано %d байт, время %v\n",
+				fmt.Printf("[Worker %d] Query %s: found %d records, read %d bytes, time %v\n",
 					worker.ID, queryType, result.HitCount, result.BytesRead, duration)
 			}
 		} else {
-			// Вывод информации об ошибке
+			// Output error information
 			if worker.Config.Verbose {
-				fmt.Printf("[Worker %d] Ошибка запроса %s: %v\n", worker.ID, queryType, err)
+				fmt.Printf("[Worker %d] Query error %s: %v\n", worker.ID, queryType, err)
 			}
 		}
 	}
 }
 
-// selectRandomQueryType выбирает случайный тип запроса на основе распределения
+// selectRandomQueryType selects a random query type based on distribution
 func selectRandomQueryType(distribution map[models.QueryType]int) models.QueryType {
-	// Вычисляем общий вес всех типов запросов
+	// Calculate the total weight of all query types
 	totalWeight := 0
 	for _, weight := range distribution {
 		totalWeight += weight
 	}
 
-	// Если нет распределения, возвращаем простой запрос
+	// If there is no distribution, return a simple query
 	if totalWeight == 0 {
 		return models.SimpleQuery
 	}
 
-	// Генерируем случайное число от 0 до общего веса
+	// Generate a random number from 0 to total weight
 	randomNum := randInt(0, totalWeight)
 
-	// Выбираем тип запроса на основе его веса
+	// Select the query type based on its weight
 	currentWeight := 0
 	for queryType, weight := range distribution {
 		currentWeight += weight
@@ -259,11 +259,11 @@ func selectRandomQueryType(distribution map[models.QueryType]int) models.QueryTy
 		}
 	}
 
-	// По умолчанию возвращаем простой запрос
+	// By default, return a simple query
 	return models.SimpleQuery
 }
 
-// randInt возвращает случайное число в диапазоне [min, max)
+// randInt returns a random number in the range [min, max)
 func randInt(min, max int) int {
 	return min + rand.Intn(max-min)
 }
