@@ -2,69 +2,42 @@ package pkg
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 )
 
-// Prometheus метрики
+// Объявляем переменные для метрик, но не инициализируем их сразу
+// Это позволит избежать конфликтов при инициализации
 var (
-	RequestsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "log_generator_requests_total",
-			Help: "Общее количество запросов, отправленных генератором логов",
-		},
-		[]string{"status", "destination"},
-	)
+	RequestsTotal   *prometheus.CounterVec
+	LogsTotal       *prometheus.CounterVec
+	RequestDuration *prometheus.HistogramVec
+	RetryCounter    prometheus.Counter
+	RPSGauge        prometheus.Gauge
+	LPSGauge        prometheus.Gauge
+	BatchSizeGauge  prometheus.Gauge
 
-	LogsTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "log_generator_logs_total",
-			Help: "Общее количество сгенерированных логов по типам",
-		},
-		[]string{"log_type", "destination"},
-	)
-
-	RequestDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "log_generator_request_duration_seconds",
-			Help:    "Время выполнения запросов",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"status", "destination"},
-	)
-
-	RetryCounter = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "log_generator_retry_count",
-			Help: "Количество повторных попыток отправки запросов",
-		},
-	)
-
-	RPSGauge = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "log_generator_rps",
-			Help: "Текущее количество запросов в секунду",
-		},
-	)
-
-	LPSGauge = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "log_generator_lps",
-			Help: "Текущее количество логов в секунду",
-		},
-	)
-
-	BatchSizeGauge = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "log_generator_batch_size",
-			Help: "Размер пакета логов",
-		},
-	)
+	// Флаг, показывающий, были ли инициализированы метрики
+	metricsInitialized bool
 )
 
 // InitPrometheus инициализирует метрики Prometheus
 func InitPrometheus(config Config) {
+	// Проверяем, не были ли уже инициализированы метрики
+	if metricsInitialized {
+		return
+	}
+
+	// Используем метрики из common, если они уже инициализированы
+	// Это предотвратит дублирование регистрации
+	RequestsTotal = common.RequestsTotal
+	LogsTotal = common.LogsTotal
+	RequestDuration = common.RequestDuration
+	RetryCounter = common.RetryCounter
+	RPSGauge = common.RPSGauge
+	LPSGauge = common.LPSGauge
+	BatchSizeGauge = common.BatchSizeGauge
+
 	// Вызываем инициализацию метрик из общего пакета
 	commonConfig := &common.Config{
 		Generator: common.GeneratorConfig{
@@ -72,6 +45,9 @@ func InitPrometheus(config Config) {
 		},
 	}
 	common.InitGeneratorMetrics(commonConfig)
+
+	// Устанавливаем флаг инициализации
+	metricsInitialized = true
 }
 
 // StartMetricsServer запускает HTTP-сервер для метрик Prometheus

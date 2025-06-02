@@ -15,14 +15,19 @@ show_help() {
     echo ""
     echo "Options:"
     echo "  --generator     - Start the log generator after starting the log systems"
+    echo "  --querier       - Start the log querier after starting the log systems"
+    echo "  --combined      - Start the log combined after starting the log systems"
+    echo "  --native        - Start the log generator natively (without Docker)"
     echo "  --no-monitoring - Don't start or check monitoring system (ignored with 'monitoring' log system)"
     echo "  --down          - Stop the specified log system and its containers"
+    echo "  --stop-generator - Stop only the log generator (doesn't affect other systems)"
     echo "  --help          - Show this help"
     echo ""
     echo "Examples:"
     echo "  $0 monitoring                # Start only monitoring (VictoriaMetrics, Grafana)"
     echo "  $0 elk                       # Start ELK Stack and monitoring"
     echo "  $0 loki --generator          # Start Loki, monitoring, and log generator"
+    echo "  $0 loki --generator --native # Start Loki, monitoring, and native log generator"
     echo "  $0 victorialogs --no-monitoring # Start VictoriaLogs without monitoring"
     echo "  $0 elk --down                # Stop ELK Stack but leave monitoring running"
     echo "  $0 monitoring --down         # Stop the monitoring system"
@@ -225,15 +230,44 @@ stop_victorialogs() {
 stop_generator() {
     echo "Stopping Log Generator..."
     
-    # Stop the generator
-    cd load_tool/go_generator
-    if [ -f "docker-compose.yml" ]; then
-        docker-compose down
-        echo "Log Generator stopped successfully!"
-    else
-        echo "Warning: docker-compose.yml not found in shared/go_generator directory"
+    # Attempt to stop native generator if PID file exists
+    if [ -f "load_tool/generator.pid" ]; then
+        echo "Attempting to stop natively running generator..."
+        PID=$(cat load_tool/generator.pid)
+        if ps -p $PID > /dev/null; then
+            kill $PID
+            echo "Native log generator (PID: $PID) stopped successfully!"
+        else
+            echo "Native log generator process (PID: $PID) not found, removing stale PID file"
+        fi
+        rm -f load_tool/generator.pid
     fi
-    cd - > /dev/null
+    
+    # Always try to stop Docker container as well
+    if [ -d "load_tool" ]; then
+        cd load_tool
+        if [ -f "docker-compose.yml" ]; then
+            echo "Attempting to stop Docker-based generator..."
+            docker-compose down
+            echo "Docker-based log generator stopped!"
+        else
+            echo "Note: docker-compose.yml not found in load_tool directory"
+        fi
+        cd - > /dev/null
+    else
+        echo "Note: load_tool directory not found"
+    fi
+    
+    # Double check if any processes with name "load_tool" are still running
+    RUNNING_PIDS=$(pgrep -f "load_tool.*-mode (generator|querier|combined)")
+    if [ -n "$RUNNING_PIDS" ]; then
+        echo "Found additional load_tool processes still running, stopping them:"
+        for PID in $RUNNING_PIDS; do
+            echo "Stopping process $PID..."
+            kill $PID
+        done
+        echo "All load_tool processes stopped!"
+    fi
 }
 
 # Function to start log generator
@@ -241,7 +275,7 @@ start_generator() {
     echo "Starting Log Generator..."
     
     # Read generator environment variables
-    cd load_tool/go_generator
+    cd load_tool
     read_env_file ".env"
     cd - > /dev/null
     
@@ -251,30 +285,250 @@ start_generator() {
         echo "Please specify elk, loki, or victorialogs."
         exit 1
     fi
-
+    
     # Set appropriate environment variables for the log generator based on DB_SYSTEM
     export GENERATOR_TARGET=$DB_SYSTEM
     
-    # Start the log generator
-    cd load_tool/go_generator
-    if [ -f "docker-compose.yml" ]; then
-        docker-compose up -d
-        echo "Log Generator started successfully!"
+    # Convert DB_SYSTEM to what load_tool expects
+    case $DB_SYSTEM in
+        elk )           SYSTEM_ARG="elasticsearch"
+                        ;;
+        loki )          SYSTEM_ARG="loki"
+                        ;;
+        victorialogs )  SYSTEM_ARG="victoria"
+                        ;;
+        * )             echo "Unknown system: $DB_SYSTEM"
+                        exit 1
+                        ;;
+    esac
+    
+    # Start the log generator based on mode (Docker or native)
+    if [ "$USE_NATIVE" = "true" ]; then
+        echo "Starting log generator in native mode..."
+        cd load_tool
+        
+        # Check system availability before starting
+        if [ "$DB_SYSTEM" = "loki" ]; then
+            echo -n "Checking Loki API availability... "
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3100/ready)
+            echo "$status_code"
+            if [ "$status_code" != "200" ]; then
+                echo "Warning: Failed to connect to Loki API"
+            fi
+        fi
+        
+        # Check if load_tool executable exists and build it if necessary
+        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ]; then
+            echo "load_tool executable not found or doesn't have execution permissions"
+            echo "Building load_tool..."
+            go build -o load_tool || {
+                echo "Error building load_tool"
+                cd - > /dev/null
+                return 1
+            }
+            echo "load_tool built successfully"
+        fi
+        
+        # Run with specified config and hosts file for local execution
+        echo ""
+        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
+        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "generator" &
+        GENERATOR_PID=$!
+        
+        echo "Log Generator started natively with PID: $GENERATOR_PID"
+        # Save PID to file for later stopping
+        echo $GENERATOR_PID > ./generator.pid
+        cd - > /dev/null
     else
-        echo "Warning: docker-compose.yml not found in shared/go_generator directory"
+        # Start with Docker
+        echo "Starting log generator with Docker Compose..."
+        cd load_tool
+        
+        # First stop previous generator instances to avoid conflicts
+        echo "Stopping previous instances of log generator..."
+        docker-compose down
+        
+        # Override environment variables for docker-compose
+        # Pass the selected logging system and mode through variables
+        # Add --build flag for automatic image rebuild when changes occur
+        echo "Starting log generator with updated image..."
+        SYSTEM=$SYSTEM_ARG MODE="generator" docker-compose up -d --build
+        echo "Log Generator started with Docker"
+        cd - > /dev/null
     fi
+}
+
+# Function to start log querier
+start_querier() {
+    echo "Starting log querier..."
+    # Start the log querier
+    cd load_tool
+    read_env_file ".env"
     cd - > /dev/null
     
-    # Check that generator is healthy
-    echo "Verifying Log Generator status..."
-    ./check_health.sh --generator
+    # Check if we need to specify the destination
+    if [ -z "$DB_SYSTEM" ] || [ "$DB_SYSTEM" = "monitoring" ]; then
+        echo "Error: Cannot start log querier without a specific log system target."
+        echo "Please specify elk, loki, or victorialogs."
+        exit 1
+    fi
     
-    if [ $? -eq 0 ]; then
-        echo "Log Generator started successfully!"
+    # Set appropriate environment variables for the log querier based on DB_SYSTEM
+    export GENERATOR_TARGET=$DB_SYSTEM
+    
+    # Convert DB_SYSTEM to what load_tool expects
+    case $DB_SYSTEM in
+        elk )           SYSTEM_ARG="elasticsearch"
+                        ;;
+        loki )          SYSTEM_ARG="loki"
+                        ;;
+        victorialogs )  SYSTEM_ARG="victoria"
+                        ;;
+        * )             echo "Unknown system: $DB_SYSTEM"
+                        exit 1
+                        ;;
+    esac
+    
+    # Start the log querier based on mode (Docker or native)
+    if [ "$USE_NATIVE" = "true" ]; then
+        echo "Starting log querier in native mode..."
+        cd load_tool
+        
+        # Check system availability before starting
+        if [ "$DB_SYSTEM" = "loki" ]; then
+            echo -n "Checking Loki API availability... "
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3100/ready)
+            echo "$status_code"
+            if [ "$status_code" != "200" ]; then
+                echo "Warning: Failed to connect to Loki API"
+            fi
+        fi
+        
+        # Check if load_tool executable exists and build it if necessary
+        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ]; then
+            echo "load_tool executable not found or doesn't have execution permissions"
+            echo "Building load_tool..."
+            go build -o load_tool || {
+                echo "Error building load_tool"
+                cd - > /dev/null
+                return 1
+            }
+            echo "load_tool built successfully"
+        fi
+        
+        # Run with specified config and hosts file for local execution
+        echo ""
+        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
+        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "querier" &
+        GENERATOR_PID=$!
+        
+        echo "Log Querier started natively with PID: $GENERATOR_PID"
+        # Save PID to file for later stopping
+        echo $GENERATOR_PID > ./generator.pid
+        cd - > /dev/null
     else
-        echo "Warning: Log Generator may not be fully operational."
-        echo "Check the logs for more details:"
-        echo "  docker logs go-generator"
+        # Start with Docker
+        echo "Starting log querier with Docker Compose..."
+        cd load_tool
+        
+        # First stop previous generator instances to avoid conflicts
+        echo "Stopping previous instances of log generator..."
+        docker-compose down
+        
+        # Override environment variables for docker-compose
+        # Pass the selected logging system and mode through variables
+        # Add --build flag for automatic image rebuild when changes occur
+        echo "Starting log querier with updated image..."
+        SYSTEM=$SYSTEM_ARG MODE="querier" docker-compose up -d --build
+        echo "Log Querier started with Docker"
+        cd - > /dev/null
+    fi
+}
+
+# Function to start log combined
+start_combined() {
+    echo "Starting log combined..."
+    # Start the log combined
+    cd load_tool
+    read_env_file ".env"
+    cd - > /dev/null
+    
+    # Check if we need to specify the destination
+    if [ -z "$DB_SYSTEM" ] || [ "$DB_SYSTEM" = "monitoring" ]; then
+        echo "Error: Cannot start log combined without a specific log system target."
+        echo "Please specify elk, loki, or victorialogs."
+        exit 1
+    fi
+    
+    # Set appropriate environment variables for the log combined based on DB_SYSTEM
+    export GENERATOR_TARGET=$DB_SYSTEM
+    
+    # Convert DB_SYSTEM to what load_tool expects
+    case $DB_SYSTEM in
+        elk )           SYSTEM_ARG="elasticsearch"
+                        ;;
+        loki )          SYSTEM_ARG="loki"
+                        ;;
+        victorialogs )  SYSTEM_ARG="victoria"
+                        ;;
+        * )             echo "Unknown system: $DB_SYSTEM"
+                        exit 1
+                        ;;
+    esac
+    
+    # Start the log combined based on mode (Docker or native)
+    if [ "$USE_NATIVE" = "true" ]; then
+        echo "Starting log combined in native mode..."
+        cd load_tool
+        
+        # Check system availability before starting
+        if [ "$DB_SYSTEM" = "loki" ]; then
+            echo -n "Checking Loki API availability... "
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3100/ready)
+            echo "$status_code"
+            if [ "$status_code" != "200" ]; then
+                echo "Warning: Failed to connect to Loki API"
+            fi
+        fi
+        
+        # Check if load_tool executable exists and build it if necessary
+        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ]; then
+            echo "load_tool executable not found or doesn't have execution permissions"
+            echo "Building load_tool..."
+            go build -o load_tool || {
+                echo "Error building load_tool"
+                cd - > /dev/null
+                return 1
+            }
+            echo "load_tool built successfully"
+        fi
+        
+        # Run with specified config and hosts file for local execution
+        echo ""
+        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
+        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "combined" &
+        GENERATOR_PID=$!
+        
+        echo "Log Combined started natively with PID: $GENERATOR_PID"
+        # Save PID to file for later stopping
+        echo $GENERATOR_PID > ./generator.pid
+        cd - > /dev/null
+    else
+        # Start with Docker
+        echo "Starting log combined with Docker Compose..."
+        cd load_tool
+        
+        # First stop previous generator instances to avoid conflicts
+        echo "Stopping previous instances of log generator..."
+        docker-compose down
+        
+        # Override environment variables for docker-compose
+        # Pass the selected logging system and mode through variables
+        # Add --build flag for automatic image rebuild when changes occur
+        echo "Starting log combined with updated image..."
+        SYSTEM=$SYSTEM_ARG MODE="combined" docker-compose up -d --build
+        echo "Log Combined started with Docker"
+        cd - > /dev/null
     fi
 }
 
@@ -316,21 +570,33 @@ fi
 # Parse arguments
 DB_SYSTEM=""
 LAUNCH_GENERATOR=false
+LAUNCH_QUERIER=false
+LAUNCH_COMBINED=false
 NO_MONITORING=false
 BRING_DOWN=false
+STOP_GENERATOR=false
+USE_NATIVE=false
 
 for arg in "$@"; do
     case $arg in
-        --generator )    LAUNCH_GENERATOR=true
+        --generator )   LAUNCH_GENERATOR=true
+                         ;;
+        --querier )     LAUNCH_QUERIER=true
+                         ;;
+        --combined )    LAUNCH_COMBINED=true
+                         ;;
+        --native )      USE_NATIVE=true
                          ;;
         --no-monitoring ) NO_MONITORING=true
                          ;;
         --down )        BRING_DOWN=true
                          ;;
+        --stop-generator ) STOP_GENERATOR=true
+                         ;;
         --help )        show_help
                          ;;
         * )             if [ -z "$DB_SYSTEM" ]; then
-                            DB_SYSTEM="$arg"
+                            DB_SYSTEM=$arg
                         else
                             echo "Unknown argument: $arg"
                             show_help
@@ -339,6 +605,14 @@ for arg in "$@"; do
     esac
 done
 
+# If --stop-generator flag is set, stop the generator and exit regardless of other arguments
+if $STOP_GENERATOR; then
+    stop_generator
+    echo "Log generator stopped!"
+    exit 0
+fi
+
+# Check if DB_SYSTEM is specified (unless --stop-generator is used)
 if [ -z "$DB_SYSTEM" ]; then
     echo "Error: You must specify a log system."
     show_help
@@ -414,6 +688,14 @@ if $LAUNCH_GENERATOR; then
     start_generator
 fi
 
+if $LAUNCH_QUERIER; then
+    start_querier
+fi
+
+if $LAUNCH_COMBINED; then
+    start_combined
+fi
+
 echo "All systems started successfully!"
 
 # Output information about availability of monitoring
@@ -438,6 +720,6 @@ esac
 
 case $DB_SYSTEM in
     victorialogs ) 
-              echo "VictoriaLogs is available at: http://localhost:${VICTORIALOGS_PORT}/vmui/"
+              echo "VictoriaLogs is available at: http://localhost:${VICTORIALOGS_PORT}/select/vmui/"
               ;;
 esac

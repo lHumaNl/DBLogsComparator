@@ -1,12 +1,7 @@
-mode: generator
-system: victoria
-durationSeconds: 60
+durationSeconds: 10
+metrics: true
 
 generator:
-  urlLoki: http://loki:3100
-  urlES: http://victoria-logs:9428
-  urlVictoria: http://elasticsearch:9200
-
   rps: 2
   bulkSize: 10
   maxRetries: 3
@@ -14,7 +9,7 @@ generator:
 
   workerCount: 4
   connectionCount: 10
-  verbose: false
+  verbose: true
 
   distribution:
     web_access: 60
@@ -24,23 +19,15 @@ generator:
     metric: 5
 
 querier:
-  urlLoki: http://loki:3100
-  urlES: http://victoria-logs:9428
-  urlVictoria: http://elasticsearch:9200
-
   rps: 10
   maxRetries: 3
   retryDelayMs: 500
 
   workerCount: 2
-  verbose: false
+  verbose: true
 
   distribution:
     exact_match: 30
     time_range: 40
     label_filter: 20
     complex_query: 10
-
-metrics:
-  enabled: true
-  port: 9090

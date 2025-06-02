@@ -28,15 +28,38 @@ const (
 // Параметры командной строки по умолчанию
 const (
 	defaultConfigPath = "config.yaml"
+	defaultHostsPath  = "db_hosts.yaml"
 )
 
 func main() {
 	// Параметры командной строки
 	configPath := flag.String("config", defaultConfigPath, "Путь к файлу конфигурации YAML")
+	hostsPath := flag.String("hosts", defaultHostsPath, "Путь к файлу с URL-адресами систем логирования")
 	legacyMode := flag.Bool("legacy", false, "Использовать режим аргументов командной строки вместо YAML")
 	defaultConfig := flag.Bool("default-config", false, "Создать конфигурацию по умолчанию и выйти")
 
+	// Добавляем новые флаги
+	system := flag.String("system", "", "Система логирования: loki, elasticsearch, victoria (обязательный параметр)")
+	metricsPort := flag.Int("metrics-port", 9090, "Порт для сервера метрик Prometheus")
+	mode := flag.String("mode", "generator", "Режим работы: generator, querier, combined")
+
 	flag.Parse()
+
+	// Проверяем наличие обязательного параметра system
+	if *system == "" && !*defaultConfig && !*legacyMode {
+		// Проверяем, есть ли переменная окружения LOG_DB
+		envSystem := os.Getenv("LOG_DB")
+		if envSystem != "" {
+			*system = envSystem
+			fmt.Printf("Используется система логирования из переменной окружения LOG_DB: %s\n", *system)
+		} else {
+			fmt.Println("Ошибка: не указана система логирования")
+			fmt.Println("Укажите систему с помощью флага -system или переменной окружения LOG_DB")
+			fmt.Println("Доступные системы: loki, elasticsearch, victoria")
+			flag.Usage()
+			os.Exit(1)
+		}
+	}
 
 	// Создание конфигурации по умолчанию, если запрошено
 	if *defaultConfig {
@@ -82,6 +105,66 @@ func main() {
 		}
 	}
 
+	// Устанавливаем систему из командной строки или переменной окружения
+	if *system != "" {
+		// Проверяем, что указана допустимая система
+		switch *system {
+		case systemLoki, systemES, systemVictoria:
+			config.System = *system
+			fmt.Printf("Используется система логирования: %s\n", *system)
+		default:
+			log.Fatalf("Неизвестная система логирования: %s", *system)
+		}
+	}
+
+	// Проверяем, что система указана
+	if config.System == "" {
+		log.Fatalf("Не указана система логирования. Используйте флаг -system или укажите в конфигурационном файле")
+	}
+
+	// Устанавливаем режим работы из командной строки
+	if *mode != "" {
+		// Проверяем, что указан допустимый режим
+		switch *mode {
+		case modeGeneratorOnly, modeQuerierOnly, modeCombined:
+			config.Mode = *mode
+			fmt.Printf("Используется режим работы: %s\n", *mode)
+		default:
+			log.Fatalf("Неизвестный режим работы: %s", *mode)
+		}
+	}
+
+	// Устанавливаем порт метрик из командной строки
+	if *metricsPort != 0 {
+		config.MetricsPort = *metricsPort
+	}
+
+	// Загружаем конфигурацию хостов из файла
+	hostsFullPath := *hostsPath
+	if !filepath.IsAbs(hostsFullPath) {
+		hostsFullPath = filepath.Join(execDir, *hostsPath)
+	}
+
+	hostsConfig, err := common.LoadHostsConfig(hostsFullPath)
+	if err != nil {
+		log.Printf("Предупреждение: не удалось загрузить файл с хостами: %v", err)
+		log.Printf("Будут использованы URL из основного конфигурационного файла или значения по умолчанию")
+	} else {
+		// Применяем загруженные URL-адреса к основной конфигурации
+		// В Go структуры не могут быть nil, поэтому проверяем режим работы
+		if config.Mode == modeGeneratorOnly || config.Mode == modeCombined {
+			config.Generator.URLLoki = hostsConfig.URLLoki
+			config.Generator.URLES = hostsConfig.URLES
+			config.Generator.URLVictoria = hostsConfig.URLVictoria
+		}
+		if config.Mode == modeQuerierOnly || config.Mode == modeCombined {
+			config.Querier.URLLoki = hostsConfig.URLLoki
+			config.Querier.URLES = hostsConfig.URLES
+			config.Querier.URLVictoria = hostsConfig.URLVictoria
+		}
+		fmt.Printf("Загружены URL-адреса систем из файла: %s\n", hostsFullPath)
+	}
+
 	// Создаем структуру для статистики
 	stats := &common.Stats{
 		StartTime: time.Now(),
@@ -112,12 +195,14 @@ func main() {
 func getDefaultConfig() *common.Config {
 	return &common.Config{
 		Mode:            "generator",
-		System:          "victoria",
+		System:          "", // Должно быть указано через CLI или переменную окружения
 		DurationSeconds: 60,
+		Metrics:         true,
+		MetricsPort:     9090,
 		Generator: common.GeneratorConfig{
-			URLLoki:         "http://loki:3100/loki/api/v1/push",
-			URLES:           "http://elasticsearch:9200/_bulk",
-			URLVictoria:     "http://victoria-logs:9428/api/v1/write",
+			URLLoki:         "http://loki:3100",
+			URLES:           "http://elasticsearch:9200",
+			URLVictoria:     "http://victorialogs:9428",
 			RPS:             100,
 			BulkSize:        10,
 			WorkerCount:     4,
@@ -136,7 +221,7 @@ func getDefaultConfig() *common.Config {
 		Querier: common.QuerierConfig{
 			URLLoki:      "http://loki:3100",
 			URLES:        "http://elasticsearch:9200",
-			URLVictoria:  "http://victoria-logs:9428",
+			URLVictoria:  "http://victorialogs:9428",
 			RPS:          10,
 			WorkerCount:  2,
 			MaxRetries:   3,
@@ -148,10 +233,6 @@ func getDefaultConfig() *common.Config {
 				"label_filter":  20,
 				"complex_query": 10,
 			},
-		},
-		Metrics: common.MetricsConfig{
-			Enabled: true,
-			Port:    9090,
 		},
 	}
 }
@@ -202,10 +283,12 @@ func runInLegacyMode() {
 		Mode:            *mode,
 		System:          *system,
 		DurationSeconds: *duration,
+		Metrics:         *metricsEnabled,
+		MetricsPort:     *metricsPort,
 		Generator: common.GeneratorConfig{
-			URLLoki:         "http://loki:3100/loki/api/v1/push",
-			URLES:           "http://elasticsearch:9200/_bulk",
-			URLVictoria:     "http://victoria-logs:9428/api/v1/write",
+			URLLoki:         "http://loki:3100",
+			URLES:           "http://elasticsearch:9200",
+			URLVictoria:     "http://victorialogs:9428",
 			RPS:             *rps,
 			BulkSize:        *bulkSize,
 			WorkerCount:     *workerCount,
@@ -224,7 +307,7 @@ func runInLegacyMode() {
 		Querier: common.QuerierConfig{
 			URLLoki:      "http://loki:3100",
 			URLES:        "http://elasticsearch:9200",
-			URLVictoria:  "http://victoria-logs:9428",
+			URLVictoria:  "http://victorialogs:9428",
 			RPS:          *qps,
 			WorkerCount:  *workerCount,
 			MaxRetries:   *maxRetries,
@@ -236,10 +319,6 @@ func runInLegacyMode() {
 				"label_filter":  *labelFilterWeight,
 				"complex_query": *complexQueryWeight,
 			},
-		},
-		Metrics: common.MetricsConfig{
-			Enabled: *metricsEnabled,
-			Port:    *metricsPort,
 		},
 	}
 
@@ -280,14 +359,14 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 		MaxRetries:          cfg.Generator.MaxRetries,
 		RetryDelay:          time.Duration(cfg.Generator.RetryDelayMs) * time.Millisecond,
 		Verbose:             cfg.Generator.Verbose,
-		EnableMetrics:       cfg.Metrics.Enabled,
-		MetricsPort:         cfg.Metrics.Port,
+		EnableMetrics:       cfg.Metrics,
+		MetricsPort:         cfg.MetricsPort,
 	}
 
 	// Включаем метрики, если нужно
-	if cfg.Metrics.Enabled {
+	if cfg.Metrics {
 		generator.InitPrometheus(generatorConfig)
-		generator.StartMetricsServer(cfg.Metrics.Port, generatorConfig)
+		generator.StartMetricsServer(cfg.MetricsPort, generatorConfig)
 	}
 
 	// Создаем клиент базы данных логов

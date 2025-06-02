@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// LogEntry представляет собой обобщенную структуру записи лога
+// LogEntry represents a generic log entry structure
 type LogEntry map[string]interface{}
 
-// Options содержит параметры для инициализации баз данных логов
+// Options contains parameters for log database initialization
 type Options struct {
 	BatchSize  int
 	Timeout    time.Duration
@@ -17,28 +17,28 @@ type Options struct {
 	Verbose    bool
 }
 
-// LogDB - интерфейс для всех баз данных логов
+// LogDB - interface for all log databases
 type LogDB interface {
-	// Initialize инициализирует соединение с базой данных
+	// Initialize initializes the database connection
 	Initialize() error
-	
-	// SendLogs отправляет пакет логов в базу данных
+
+	// SendLogs sends a batch of logs to the database
 	SendLogs(logs []LogEntry) error
-	
-	// Close закрывает соединение с базой данных
+
+	// Close closes the database connection
 	Close() error
-	
-	// Name возвращает имя базы данных
+
+	// Name returns the database name
 	Name() string
-	
-	// Metrics возвращает метрики работы с базой данных
+
+	// Metrics returns database operation metrics
 	Metrics() map[string]float64
-	
-	// FormatPayload форматирует записи логов в нужный формат для отправки
+
+	// FormatPayload formats log entries into the required format for sending
 	FormatPayload(logs []LogEntry) (string, string)
 }
 
-// BaseLogDB - базовая структура с общей функциональностью для всех баз данных логов
+// BaseLogDB - base structure with common functionality for all log databases
 type BaseLogDB struct {
 	URL         string
 	BatchSize   int
@@ -49,7 +49,7 @@ type BaseLogDB struct {
 	Verbose     bool
 }
 
-// NewBaseLogDB создает новый экземпляр BaseLogDB
+// NewBaseLogDB creates a new BaseLogDB instance
 func NewBaseLogDB(url string, options Options) *BaseLogDB {
 	return &BaseLogDB{
 		URL:         url,
@@ -62,17 +62,17 @@ func NewBaseLogDB(url string, options Options) *BaseLogDB {
 	}
 }
 
-// Metrics возвращает метрики работы с базой данных
+// Metrics returns database operation metrics
 func (db *BaseLogDB) Metrics() map[string]float64 {
 	return db.MetricsData
 }
 
-// CreateLogDB - фабричный метод для создания экземпляров LogDB
+// CreateLogDB - factory method for creating LogDB instances
 func CreateLogDB(mode string, baseURL string, options Options) (LogDB, error) {
 	switch mode {
-	case "victoria":
+	case "victoria", "victorialogs":
 		return NewVictoriaLogsDB(baseURL, options)
-	case "es":
+	case "es", "elasticsearch", "elk":
 		return NewElasticsearchDB(baseURL, options)
 	case "loki":
 		return NewLokiDB(baseURL, options)

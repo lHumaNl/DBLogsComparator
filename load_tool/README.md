@@ -1,124 +1,186 @@
-# Shared Components for DBLogsComparator
+# Log Generator and Querier Tool (load_tool)
 
-This directory contains shared components used across the DBLogsComparator project. These components provide the foundation for log generation and common functionality used by all log storage systems being compared.
+This directory contains a versatile Go-based tool that serves as both a log generator and a query tool for the DBLogsComparator project. It provides a unified platform for log generation, querying, and benchmarking across multiple log storage systems.
 
-## Components
+## Operational Modes
 
-### Go Log Generator (`/go_generator`)
+The tool operates in three distinct modes:
 
-The main component is a high-performance log generator written in Go with the following features:
+### 1. Generator Mode
 
-- Supports multiple log storage backends:
-  - VictoriaLogs
-  - Elasticsearch
-  - Loki
+Generates synthetic logs and sends them to the specified log system:
 - Configurable throughput (requests per second - RPS)
 - Customizable log type distribution
 - Bulk sending capabilities
-- Prometheus metrics for performance monitoring
-- Configurable retry mechanism with exponential backoff
+- Retry mechanism with exponential backoff
 
-#### Configuration
+### 2. Querier Mode
 
-The Go log generator is configured via environment variables in the `.env` file:
+Executes predefined queries against log systems to measure query performance:
+- Customizable query patterns
+- Measurement of query latency and throughput
+- Support for various query types (range, filter, aggregate)
+- Parallel query execution
 
-- `GENERATOR_MODE`: Backend to use (victoria, es, loki)
-- `GENERATOR_RPS`: Requests per second
-- `GENERATOR_DURATION`: Test duration
-- `GENERATOR_BULK_SIZE`: Number of logs per request
-- `GENERATOR_WORKERS`: Number of worker goroutines
-- `GENERATOR_CONNECTIONS`: Number of HTTP connections
-- `GENERATOR_MAX_RETRIES`: Maximum retry attempts
-- `GENERATOR_RETRY_DELAY`: Delay between retries
-- `GENERATOR_LOG_DISTRIBUTION_*`: Distribution percentages for different log types
+### 3. Combined Mode
 
-#### Backend-Specific Configuration
+Runs both generator and querier simultaneously to test under load:
+- Evaluates query performance while system is receiving logs
+- Realistic load testing scenario
+- Performance correlation between ingest and query operations
 
-Each backend has specific configuration options:
+## Supported Log Systems
 
-1. **VictoriaLogs**:
-   - `GENERATOR_URL`: URL endpoint for VictoriaLogs (default: http://victoria-logs:9428)
+The tool supports multiple log storage backends:
 
-2. **Elasticsearch**:
-   - `GENERATOR_URL`: URL endpoint for Elasticsearch (default: http://elasticsearch:9200)
+- **Elasticsearch/ELK** (`elasticsearch` or `es`): Supports both parameter names for compatibility
+- **Loki**: Grafana Loki with structured metadata
+- **VictoriaLogs** (`victoria`): VictoriaMetrics log storage system
 
-3. **Loki**:
-   - `GENERATOR_URL`: URL endpoint for Loki (default: http://loki:3100)
+## Configuration
 
-#### Usage
+### Command Line Parameters
 
-```bash
-cd load_tool/go_generator
-docker-compose up -d
+```
+Usage:
+  load_tool [flags]
+
+Flags:
+  -config string
+        Path to configuration file YAML (default "config.yaml")
+  -hosts string
+        Path to hosts file with log system URLs (default "db_hosts.yaml")
+  -mode string
+        Operation mode: generator, querier, combined (default "generator")
+  -system string
+        Log system type: loki, elasticsearch/es, victoria
+  -metrics-port int
+        Prometheus metrics port (default 9090)
 ```
 
-To change the mode of operation, update the `.env` file or set environment variables directly:
+### YAML Configuration
+
+The tool uses two main configuration files:
+
+1. **config.yaml**: General settings
+   ```yaml
+   generator:
+     rps: 100
+     duration: 1h
+     bulk_size: 10
+     workers: 4
+     connections: 10
+     max_retries: 3
+     retry_delay: 1s
+     log_distribution:
+       web_access: 40
+       web_error: 10
+       application: 30
+       metric: 10
+       event: 10
+   
+   querier:
+     queries_per_second: 10
+     duration: 1h
+     concurrency: 4
+     query_types:
+       range: 30
+       filter: 40
+       aggregate: 30
+   ```
+
+2. **db_hosts.yaml**: Backend-specific endpoints
+   ```yaml
+   urlLoki: http://localhost:3100
+   urlES: http://localhost:9200
+   urlVictoria: http://localhost:9428
+   ```
+
+## Running the Tool
+
+### Docker Usage
+
+To run the tool using Docker:
 
 ```bash
-# For Loki
-GENERATOR_MODE=loki docker-compose up -d
+# Set environment variables and start the container
+SYSTEM=loki MODE=generator docker-compose up -d
 
-# For Elasticsearch
-GENERATOR_MODE=es docker-compose up -d
+# For querier mode
+SYSTEM=elasticsearch MODE=querier docker-compose up -d
 
-# For VictoriaLogs
-GENERATOR_MODE=victoria docker-compose up -d
+# For combined mode
+SYSTEM=victoria MODE=combined docker-compose up -d
 ```
 
-#### Metrics
+To stop the tool:
 
-The Go log generator exposes Prometheus metrics on port 8080 (configurable), which include:
+```bash
+docker-compose down
+```
 
-- Requests per second (RPS)
-- Logs per second (LPS)
-- Request durations
-- Retry counts
-- Log type distribution by backend
-- HTTP status codes and errors
+### Native Usage
 
-#### Log Types
+For development or performance testing, you can run the tool natively:
+
+```bash
+# Build the tool
+go build -o load_tool
+
+# Run in generator mode
+./load_tool -system loki -mode generator
+
+# Run in querier mode
+./load_tool -system elasticsearch -mode querier
+
+# Run in combined mode
+./load_tool -system victoria -mode combined
+```
+
+## Log Types and Structure
 
 The generator creates various log types to simulate real-world scenarios:
 
 1. **Web Access Logs**: HTTP access logs with client IP, method, path, status code, and response time
 2. **Web Error Logs**: Application errors with stack traces and error codes
-3. **Application Logs**: General application logs with different severity levels (debug, info, warn, error, fatal)
+3. **Application Logs**: General application logs with different severity levels
 4. **Metric Logs**: Numerical metrics with dimensions
 5. **Event Logs**: Discrete events with timestamps and metadata
 
-#### Log Structure
+All logs follow a consistent JSON structure with common fields and type-specific fields.
 
-All generated logs follow a consistent JSON structure with common fields:
+## Metrics
 
-- `timestamp`: ISO-8601 formatted timestamp
-- `log_type`: Type of log (web_access, web_error, application, metric, event)
-- `message`: The log message content
-- `host`: Simulated source host name
-- `container_name`: Simulated container identifier
-- `service_name`: Simulated service identifier
+The tool exposes Prometheus metrics on the configured port (default: 9090):
 
-Each log type adds specific fields relevant to that type (e.g., HTTP status for web_access logs).
+### Generator Metrics
+- Logs generated per second
+- Request durations by log system
+- Error rates and retry counts
+- Log type distribution
+
+### Querier Metrics
+- Queries per second
+- Query latency (min, max, avg, percentiles)
+- Query errors by type
+- Response size distribution
 
 ## Integration with Monitoring
 
-All shared components are integrated with the centralized monitoring system through the `monitoring-network` Docker network. The metrics are scraped by VictoriaMetrics and visualized in Grafana dashboards.
+The tool is integrated with the centralized monitoring system through the `monitoring-network` Docker network. All metrics are scraped by VictoriaMetrics and visualized in dedicated Grafana dashboards.
 
-## Performance Considerations
+## Performance Tuning
 
-The log generator is designed for high performance, but there are some considerations:
+For optimal performance:
 
-- Increasing `GENERATOR_BULK_SIZE` improves throughput but increases memory usage
-- `GENERATOR_WORKERS` should be tuned based on available CPU cores
-- `GENERATOR_CONNECTIONS` affects network resource usage
-- Very high RPS values may require additional resources on both generator and target systems
+- Adjust `bulk_size` to balance throughput and memory usage
+- Set `workers` based on available CPU cores
+- Configure `connections` according to network capabilities
+- For query performance, tune `concurrency` based on system resources
 
 ## Troubleshooting
 
-- **Connection issues**: Ensure network connectivity between services (check Docker networks)
+- **Connection issues**: Ensure network connectivity between services
 - **Performance problems**: Adjust worker count, connections, and bulk size
-- **Metric collection issues**: Verify the generator is connected to the monitoring network
-- **Log format errors**: Check the specific requirements of each backend system
-
-## Known Issues
-
-- There is a known issue with the RPS parameter in the Go log generator. Despite setting `GENERATOR_RPS=2` in the `.env` file, the generator might start with a higher RPS value. This can cause excessive load on the logging systems. The issue is related to parameter handling in the code.
+- **Query timeout errors**: Increase timeout settings or reduce query complexity
+- **Metric collection issues**: Verify the tool is connected to the monitoring network

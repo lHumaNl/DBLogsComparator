@@ -12,12 +12,16 @@ services:
     container_name: go-log-generator
     working_dir: /app
     command:
-      - ./load_tool
-      - -config=/app/config.yaml
+      - "./load_tool"
+      - "-config=/app/config.yaml"
+      - "-hosts=/app/db_hosts.yaml"
+      - "-system=${SYSTEM}"
+      - "-mode=${MODE}"
     volumes:
       - ./config.yaml:/app/config.yaml
+      - ./db_hosts_docker.yaml:/app/db_hosts.yaml
     ports:
-      - "8080:8080"
+      - "${LOAD_METRICS_PORT:-9090}:9090"
     networks:
       - monitoring-network
     restart: "no"

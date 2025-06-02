@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// Config - конфигурация нагрузки
+// Config - load configuration
 type Config struct {
 	Mode                string
 	BaseURL             string
@@ -22,7 +22,7 @@ type Config struct {
 	MetricsPort         int
 }
 
-// Stats - статистика выполнения
+// Stats - execution statistics
 type Stats struct {
 	TotalRequests      int64
 	SuccessfulRequests int64

@@ -8,7 +8,7 @@ import (
 )
 
 func TestInitPrometheus(t *testing.T) {
-	// Инициализация метрик Prometheus
+	// Initialization of Prometheus metrics
 	config := Config{
 		Mode:                "test",
 		RPS:                 100,
@@ -16,60 +16,61 @@ func TestInitPrometheus(t *testing.T) {
 		WorkerCount:         4,
 		LogTypeDistribution: map[string]int{"web_access": 60, "web_error": 10, "application": 20, "metric": 5, "event": 5},
 	}
-	
-	// Просто проверяем, что функция выполняется без ошибок
+
+	// Simply checking that the function executes without errors
 	InitPrometheus(config)
 }
 
 func TestMetricsRegistration(t *testing.T) {
-	// Упрощенный тест для проверки регистрации метрик
-	// Настоящая проверка метрик требует интеграционного тестирования
-	t.Skip("Этот тест требует настройки сервера Prometheus и полной интеграции с ним")
+	// Simplified test for checking metrics registration
+	// Real metrics verification requires integration testing
+	t.Skip("This test requires Prometheus server setup and full integration with it")
 }
 
 func TestMetricsUpdate(t *testing.T) {
-	// Упрощенный тест для проверки обновления метрик
-	// Настоящая проверка обновления метрик требует интеграционного тестирования
-	t.Skip("Этот тест требует настройки сервера Prometheus и полной интеграции с ним")
+	// Simplified test for checking metrics update
+	// Real metrics update verification requires integration testing
+	t.Skip("This test requires Prometheus server setup and full integration with it")
 }
 
 func TestStartMetricsServer(t *testing.T) {
-	// Используем нестандартный порт для тестов
+	// Using non-standard port for tests
 	testPort := 19999
-	
-	// Пропускаем тест, если нет возможности запустить HTTP-сервер
-	// например, если порт уже занят
-	// Сделаем простой запрос для проверки доступности порта
+
+	// Skip test if there's no ability to start HTTP server
+	// for example, if the port is already in use
+	// Let's make a simple request to check port availability
 	client := http.Client{Timeout: 100 * time.Millisecond}
 	_, err := client.Get(fmt.Sprintf("http://localhost:%d/", testPort))
 	if err == nil {
+		// Port is already in use
 		// Порт уже занят
-		t.Skip("Порт уже используется, пропускаем тест")
+		t.Skip("Port is already in use, skipping test")
 	}
-	
+
 	config := Config{
 		EnableMetrics: true,
 		MetricsPort:   testPort,
 	}
-	
-	// Запускаем сервер метрик в отдельной горутине
+
+	// Starting metrics server in a separate goroutine
 	go func() {
 		StartMetricsServer(testPort, config)
 	}()
-	
-	// Даем серверу время на запуск
+
+	// Give the server time to start
 	time.Sleep(200 * time.Millisecond)
-	
-	// Проверяем доступность сервера
+
+	// Check server availability
 	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", testPort))
 	if err != nil {
-		t.Skipf("Не удалось выполнить запрос к серверу метрик: %v", err)
+		t.Skipf("Failed to make request to metrics server: %v", err)
 		return
 	}
 	defer resp.Body.Close()
-	
-	// Проверяем успешный статус
+
+	// Check for successful status
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Ожидался статус код 200, получено %d", resp.StatusCode)
+		t.Errorf("Expected status code 200, got %d", resp.StatusCode)
 	}
 }

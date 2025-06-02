@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -11,11 +12,12 @@ import (
 // Config - главная конфигурационная структура
 type Config struct {
 	Mode            string          `yaml:"mode"`
-	System          string          `yaml:"system"`          // Добавлено поле для выбора системы
-	DurationSeconds int             `yaml:"durationSeconds"` // Глобальная длительность
+	System          string          `yaml:"system"`                 // Добавлено поле для выбора системы
+	DurationSeconds int             `yaml:"durationSeconds"`        // Глобальная длительность
+	Metrics         bool            `yaml:"metrics"`                // Включены ли метрики
+	MetricsPort     int             `yaml:"metrics_port,omitempty"` // Порт для метрик (если не указан, используется 9090)
 	Generator       GeneratorConfig `yaml:"generator"`
 	Querier         QuerierConfig   `yaml:"querier"`
-	Metrics         MetricsConfig   `yaml:"metrics"`
 }
 
 // GeneratorConfig - конфигурация генератора логов
@@ -46,10 +48,11 @@ type QuerierConfig struct {
 	Distribution map[string]int `yaml:"distribution"`
 }
 
-// MetricsConfig - конфигурация системы метрик
-type MetricsConfig struct {
-	Enabled bool `yaml:"enabled"`
-	Port    int  `yaml:"port"`
+// HostsConfig содержит URL-адреса систем логирования
+type HostsConfig struct {
+	URLLoki     string `yaml:"urlLoki"`
+	URLES       string `yaml:"urlES"`
+	URLVictoria string `yaml:"urlVictoria"`
 }
 
 // LoadConfig загружает конфигурацию из YAML-файла
@@ -62,6 +65,33 @@ func LoadConfig(filename string) (*Config, error) {
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("ошибка парсинга YAML: %v", err)
+	}
+
+	// Установка порта метрик по умолчанию, если не указан
+	if config.Metrics && config.MetricsPort == 0 {
+		config.MetricsPort = 9090
+	}
+
+	return &config, nil
+}
+
+// LoadHostsConfig загружает конфигурацию хостов из YAML файла
+func LoadHostsConfig(path string) (*HostsConfig, error) {
+	// Проверяем существование файла
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("файл конфигурации хостов не существует: %s", path)
+	}
+
+	// Читаем содержимое файла
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения файла конфигурации хостов: %v", err)
+	}
+
+	// Разбираем YAML
+	var config HostsConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("ошибка разбора YAML в файле конфигурации хостов: %v", err)
 	}
 
 	return &config, nil
@@ -117,11 +147,12 @@ func (q *QuerierConfig) RetryDelay() time.Duration {
 func SaveConfig(config *Config, filename string) error {
 	data, err := yaml.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("ошибка маршалинга YAML: %v", err)
+		return fmt.Errorf("ошибка сериализации YAML: %v", err)
 	}
 
 	if err := ioutil.WriteFile(filename, data, 0644); err != nil {
-		return fmt.Errorf("ошибка записи в файл: %v", err)
+		return fmt.Errorf("ошибка записи файла конфигурации: %v", err)
 	}
+
 	return nil
 }

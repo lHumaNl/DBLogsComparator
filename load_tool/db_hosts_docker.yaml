@@ -1,0 +1,3 @@
+urlLoki: http://loki:3100
+urlES: http://elasticsearch:9200
+urlVictoria: http://victorialogs:9428

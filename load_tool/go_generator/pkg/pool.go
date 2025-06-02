@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// ClientPool - пул HTTP-клиентов для переиспользования соединений
+// ClientPool - HTTP client pool for connection reuse
 type ClientPool struct {
 	clients []*http.Client
 	mutex   sync.Mutex
 	index   int
 }
 
-// NewClientPool создает новый пул HTTP-клиентов
+// NewClientPool creates a new HTTP client pool
 func NewClientPool(size int) *ClientPool {
 	pool := &ClientPool{
 		clients: make([]*http.Client, size),
@@ -34,7 +34,7 @@ func NewClientPool(size int) *ClientPool {
 	return pool
 }
 
-// Get возвращает HTTP-клиент из пула
+// Get returns an HTTP client from the pool
 func (p *ClientPool) Get() *http.Client {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -44,12 +44,12 @@ func (p *ClientPool) Get() *http.Client {
 	return client
 }
 
-// BufferPool - пул буферов для минимизации аллокаций памяти
+// BufferPool - buffer pool to minimize memory allocations
 type BufferPool struct {
 	pool sync.Pool
 }
 
-// NewBufferPool создает новый пул буферов
+// NewBufferPool creates a new buffer pool
 func NewBufferPool() *BufferPool {
 	return &BufferPool{
 		pool: sync.Pool{
@@ -60,14 +60,14 @@ func NewBufferPool() *BufferPool {
 	}
 }
 
-// Get возвращает буфер из пула
+// Get returns a buffer from the pool
 func (p *BufferPool) Get() *bytes.Buffer {
 	buf := p.pool.Get().(*bytes.Buffer)
 	buf.Reset()
 	return buf
 }
 
-// Put возвращает буфер в пул
+// Put returns a buffer to the pool
 func (p *BufferPool) Put(buf *bytes.Buffer) {
 	p.pool.Put(buf)
 }

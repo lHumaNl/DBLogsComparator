@@ -1,0 +1,3 @@
+urlLoki: http://localhost:3100
+urlES: http://localhost:9200
+urlVictoria: http://localhost:9428

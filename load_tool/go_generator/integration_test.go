@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -10,51 +10,58 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/pkg"
 )
 
-// TestMain - точка входа для запуска тестов
+// TestMain - entry point for running tests
 func TestMain(m *testing.M) {
-	// Здесь можно выполнить подготовку перед запуском тестов
+	// Here we can perform setup before running tests
 	setupTestEnvironment()
 
-	// Запуск тестов
+	// Run tests
 	code := m.Run()
 
-	// Очистка после выполнения тестов
+	// Cleanup after tests execution
 	teardownTestEnvironment()
 
-	// Выход с кодом выполнения тестов
+	// Exit with test execution code
 	os.Exit(code)
 }
 
-// Настройка тестового окружения
+// Test environment setup
 func setupTestEnvironment() {
+	// Here we can prepare the test environment:
+	// - Set environment variables
+	// - Initialize resources
+	// - Create temporary files
 	// Здесь можно подготовить тестовое окружение:
 	// - Установить переменные окружения
 	// - Инициализировать ресурсы
 	// - Создать временные файлы
 }
 
-// Очистка тестового окружения
+// Test environment cleanup
 func teardownTestEnvironment() {
+	// Here we can clean up the test environment:
+	// - Remove temporary files
+	// - Free up resources
 	// Здесь можно очистить тестовое окружение:
 	// - Удалить временные файлы
 	// - Освободить ресурсы
 }
 
-// Интеграционный тест для проверки основного функционала
+// Integration test to verify core functionality
 func TestLogGeneratorIntegration(t *testing.T) {
-	// Пропускаем этот тест при обычном выполнении,
-	// так как он требует внешних зависимостей и настроенного окружения
+	// Skip this test during normal execution,
+	// as it requires external dependencies and configured environment
 	if os.Getenv("RUN_INTEGRATION_TESTS") != "true" {
-		t.Skip("Интеграционные тесты пропущены. Установите RUN_INTEGRATION_TESTS=true для их запуска.")
+		t.Skip("Integration tests skipped. Set RUN_INTEGRATION_TESTS=true to run them.")
 	}
 
-	// Создаем тестовую конфигурацию с коротким временем выполнения
+	// Create test configuration with short execution time
 	config := pkg.Config{
-		Mode:        "mock",                  // Используем mock для тестирования
-		BaseURL:     "http://localhost:8000", // Адрес мок-сервера
+		Mode:        "mock",                  // Using mock for testing
+		BaseURL:     "http://localhost:8000", // Mock server address
 		URL:         "http://localhost:8000",
 		RPS:         10,
-		Duration:    100 * time.Millisecond, // Короткая продолжительность для теста
+		Duration:    100 * time.Millisecond, // Short duration for the test
 		BulkSize:    5,
 		WorkerCount: 2,
 		LogTypeDistribution: map[string]int{
@@ -70,10 +77,10 @@ func TestLogGeneratorIntegration(t *testing.T) {
 		EnableMetrics: false,
 	}
 
-	// Создаем мок базы данных для тестирования
+	// Create mock database for testing
 	mockDB := NewMockLogDB("integration_test")
 
-	// Запускаем генератор с таймаутом
+	// Start generator with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -86,26 +93,26 @@ func TestLogGeneratorIntegration(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("Ошибка при запуске генератора: %v", err)
+			t.Fatalf("Error running generator: %v", err)
 		}
 	case <-ctx.Done():
-		t.Fatal("Тест превысил время ожидания")
+		t.Fatal("Test exceeded timeout")
 	}
 
-	// Проверяем, что логи были отправлены
+	// Check that logs were sent
 	if mockDB.sendCalled == 0 {
-		t.Error("Не было вызовов для отправки логов")
+		t.Error("No calls to send logs")
 	}
 }
 
-// MockLogDB для тестов интеграции
+// MockLogDB for integration tests
 type MockLogDB struct {
 	name       string
 	sendCalled int
 	metrics    map[string]float64
 }
 
-// Создаем новый экземпляр MockLogDB для интеграционных тестов
+// Create new MockLogDB instance for integration tests
 func NewMockLogDB(name string) *MockLogDB {
 	return &MockLogDB{
 		name:       name,

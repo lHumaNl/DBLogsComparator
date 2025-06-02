@@ -168,6 +168,9 @@ var (
 var (
 	writeRequestsCount int64
 	readRequestsCount  int64
+
+	// Флаг, показывающий, был ли уже запущен сервер метрик
+	metricsServerStarted bool
 )
 
 // IncrementWriteRequests увеличивает счетчик запросов записи
@@ -247,6 +250,12 @@ func updateRealTimeMetrics() {
 
 // StartMetricsServer запускает HTTP-сервер для Prometheus метрик
 func StartMetricsServer(port int) {
+	// Проверяем, не был ли уже запущен сервер метрик
+	if metricsServerStarted {
+		fmt.Println("Metrics server already started, skipping initialization")
+		return
+	}
+
 	http.Handle("/metrics", promhttp.Handler())
 	go func() {
 		addr := fmt.Sprintf(":%d", port)
@@ -255,6 +264,9 @@ func StartMetricsServer(port int) {
 			fmt.Printf("Error starting metrics server: %v\n", err)
 		}
 	}()
+
+	// Устанавливаем флаг, что сервер метрик запущен
+	metricsServerStarted = true
 }
 
 // InitGeneratorMetrics инициализирует метрики для генератора логов
