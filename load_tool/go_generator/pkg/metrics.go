@@ -1,12 +1,10 @@
 package pkg
 
 import (
-	"net/http"
-	"fmt"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 )
 
 // Prometheus метрики
@@ -18,7 +16,7 @@ var (
 		},
 		[]string{"status", "destination"},
 	)
-	
+
 	LogsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "log_generator_logs_total",
@@ -26,7 +24,7 @@ var (
 		},
 		[]string{"log_type", "destination"},
 	)
-	
+
 	RequestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "log_generator_request_duration_seconds",
@@ -35,28 +33,28 @@ var (
 		},
 		[]string{"status", "destination"},
 	)
-	
+
 	RetryCounter = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "log_generator_retry_count",
 			Help: "Количество повторных попыток отправки запросов",
 		},
 	)
-	
+
 	RPSGauge = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "log_generator_rps",
 			Help: "Текущее количество запросов в секунду",
 		},
 	)
-	
+
 	LPSGauge = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "log_generator_lps",
 			Help: "Текущее количество логов в секунду",
 		},
 	)
-	
+
 	BatchSizeGauge = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "log_generator_batch_size",
@@ -67,20 +65,17 @@ var (
 
 // InitPrometheus инициализирует метрики Prometheus
 func InitPrometheus(config Config) {
-	// Устанавливаем начальное значение для размера пакета
-	BatchSizeGauge.Set(float64(config.BulkSize))
+	// Вызываем инициализацию метрик из общего пакета
+	commonConfig := &common.Config{
+		Generator: common.GeneratorConfig{
+			BulkSize: config.BulkSize,
+		},
+	}
+	common.InitGeneratorMetrics(commonConfig)
 }
 
 // StartMetricsServer запускает HTTP-сервер для метрик Prometheus
 func StartMetricsServer(metricsPort int, config Config) {
-	http.Handle("/metrics", promhttp.Handler())
-	
-	go func() {
-		addr := fmt.Sprintf(":%d", metricsPort)
-		fmt.Printf("Запуск сервера метрик Prometheus на %s\n", addr)
-		
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			fmt.Printf("Ошибка запуска сервера метрик: %v\n", err)
-		}
-	}()
+	// Используем общую реализацию сервера метрик
+	common.StartMetricsServer(metricsPort)
 }

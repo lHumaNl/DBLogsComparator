@@ -1,17 +1,18 @@
 package main
 
 import (
-	"flag"
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
-	"runtime"
-	"time"
+	"net/http"
 	"os"
 	"strconv"
+	"time"
 
-	"github.com/dblogscomparator/log-generator/logdb"
-	"github.com/dblogscomparator/log-generator/pkg"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/pkg"
 )
 
 func main() {
@@ -25,7 +26,7 @@ func main() {
 	// По умолчанию - количество доступных CPU * 2
 	cpuCount := runtime.NumCPU()
 	defaultWorkers := cpuCount * 2
-	
+
 	// Если установлен лимит CPU для контейнера, используем его
 	cpuLimit := os.Getenv("CPU_LIMIT")
 	if cpuLimit != "" {

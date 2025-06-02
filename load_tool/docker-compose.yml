@@ -1,0 +1,23 @@
+version: '3.8'
+
+networks:
+  monitoring-network:
+    external: true
+
+services:
+  go-log-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-log-generator
+    working_dir: /app
+    command:
+      - ./load_tool
+      - -config=/app/config.yaml
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    ports:
+      - "8080:8080"
+    networks:
+      - monitoring-network
+    restart: "no"

@@ -2,25 +2,25 @@ package main
 
 import (
 	"context"
-	"os"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/dblogscomparator/log-generator/logdb"
-	"github.com/dblogscomparator/log-generator/pkg"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/pkg"
 )
 
 // TestMain - точка входа для запуска тестов
 func TestMain(m *testing.M) {
 	// Здесь можно выполнить подготовку перед запуском тестов
 	setupTestEnvironment()
-	
+
 	// Запуск тестов
 	code := m.Run()
-	
+
 	// Очистка после выполнения тестов
 	teardownTestEnvironment()
-	
+
 	// Выход с кодом выполнения тестов
 	os.Exit(code)
 }
@@ -47,15 +47,15 @@ func TestLogGeneratorIntegration(t *testing.T) {
 	if os.Getenv("RUN_INTEGRATION_TESTS") != "true" {
 		t.Skip("Интеграционные тесты пропущены. Установите RUN_INTEGRATION_TESTS=true для их запуска.")
 	}
-	
+
 	// Создаем тестовую конфигурацию с коротким временем выполнения
 	config := pkg.Config{
-		Mode:       "mock", // Используем mock для тестирования
-		BaseURL:    "http://localhost:8000", // Адрес мок-сервера
-		URL:        "http://localhost:8000",
-		RPS:        10,
-		Duration:   100 * time.Millisecond, // Короткая продолжительность для теста
-		BulkSize:   5,
+		Mode:        "mock",                  // Используем mock для тестирования
+		BaseURL:     "http://localhost:8000", // Адрес мок-сервера
+		URL:         "http://localhost:8000",
+		RPS:         10,
+		Duration:    100 * time.Millisecond, // Короткая продолжительность для теста
+		BulkSize:    5,
 		WorkerCount: 2,
 		LogTypeDistribution: map[string]int{
 			"web_access":  60,
@@ -69,20 +69,20 @@ func TestLogGeneratorIntegration(t *testing.T) {
 		RetryDelay:    50 * time.Millisecond,
 		EnableMetrics: false,
 	}
-	
+
 	// Создаем мок базы данных для тестирования
 	mockDB := NewMockLogDB("integration_test")
-	
+
 	// Запускаем генератор с таймаутом
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	
+
 	done := make(chan error)
 	go func() {
 		err := pkg.RunGenerator(config, mockDB)
 		done <- err
 	}()
-	
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -91,7 +91,7 @@ func TestLogGeneratorIntegration(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("Тест превысил время ожидания")
 	}
-	
+
 	// Проверяем, что логи были отправлены
 	if mockDB.sendCalled == 0 {
 		t.Error("Не было вызовов для отправки логов")

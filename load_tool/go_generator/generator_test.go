@@ -1,13 +1,12 @@
 package main
 
 import (
-	"flag"
+	"encoding/json"
 	"os"
 	"testing"
-	"time"
-	
-	"github.com/dblogscomparator/log-generator/logdb"
-	"github.com/dblogscomparator/log-generator/pkg"
+
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/pkg"
 )
 
 // TestCmdLineArgs проверяет правильность разбора аргументов командной строки
@@ -18,7 +17,7 @@ func TestCmdLineArgs(t *testing.T) {
 		os.Args = originalArgs
 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	}()
-	
+
 	// Тест 1: Базовые аргументы
 	os.Args = []string{
 		"log-generator",
@@ -28,37 +27,37 @@ func TestCmdLineArgs(t *testing.T) {
 		"-bulk-size", "50",
 		"-worker-count", "4",
 	}
-	
+
 	// Создаем новый FlagSet для тестов
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	
+
 	// Параметры для теста
 	mode := flag.String("mode", "victoria", "Режим работы")
 	rps := flag.Int("rps", 10, "Количество запросов в секунду")
 	duration := flag.Duration("duration", 1*time.Minute, "Продолжительность теста")
 	bulkSize := flag.Int("bulk-size", 100, "Количество логов в одном запросе")
 	workerCount := flag.Int("worker-count", 4, "Количество рабочих горутин")
-	
+
 	// Разбор аргументов
 	flag.Parse()
-	
+
 	// Проверка результатов
 	if *mode != "es" {
 		t.Errorf("Неправильный режим, ожидалось 'es', получено '%s'", *mode)
 	}
-	
+
 	if *rps != 100 {
 		t.Errorf("Неправильное значение RPS, ожидалось 100, получено %d", *rps)
 	}
-	
+
 	if *bulkSize != 50 {
 		t.Errorf("Неправильный размер пакета, ожидалось 50, получено %d", *bulkSize)
 	}
-	
+
 	if *workerCount != 4 {
 		t.Errorf("Неправильное количество воркеров, ожидалось 4, получено %d", *workerCount)
 	}
-	
+
 	if *duration != 10*time.Second {
 		t.Errorf("Неправильная продолжительность, ожидалось 10s, получено %v", *duration)
 	}
@@ -83,16 +82,16 @@ func TestCreateConfig(t *testing.T) {
 			"event":       5,
 		},
 	}
-	
+
 	// Проверяем значения конфигурации
 	if config.Mode != "victoria" {
 		t.Errorf("Неправильный режим в конфигурации: %s", config.Mode)
 	}
-	
+
 	if config.RPS != 10 {
 		t.Errorf("Неправильное значение RPS: %d", config.RPS)
 	}
-	
+
 	// Проверка распределения типов логов
 	expectedDist := map[string]int{
 		"web_access":  60,
@@ -101,10 +100,10 @@ func TestCreateConfig(t *testing.T) {
 		"metric":      5,
 		"event":       5,
 	}
-	
+
 	for logType, expectedPercent := range expectedDist {
 		if config.LogTypeDistribution[logType] != expectedPercent {
-			t.Errorf("Неправильное распределение для типа '%s': ожидалось %d%%, получено %d%%", 
+			t.Errorf("Неправильное распределение для типа '%s': ожидалось %d%%, получено %d%%",
 				logType, expectedPercent, config.LogTypeDistribution[logType])
 		}
 	}

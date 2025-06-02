@@ -5,226 +5,365 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
-	generatorpkg "github.com/dblogscomparator/load_tool/go_generator/pkg"
-	querypkg "github.com/dblogscomparator/load_tool/go_querier/pkg"
-	"github.com/dblogscomparator/load_tool/common"
-	"github.com/dblogscomparator/load_tool/go_generator/logdb"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
+	generator "github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/pkg"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
 const (
 	modeGeneratorOnly = "generator"
 	modeQuerierOnly   = "querier"
 	modeCombined      = "combined"
+
+	systemLoki     = "loki"
+	systemES       = "elasticsearch"
+	systemVictoria = "victoria"
+)
+
+// Параметры командной строки по умолчанию
+const (
+	defaultConfigPath = "config.yaml"
 )
 
 func main() {
-	// Основные флаги
-	mode := flag.String("mode", "generator", "Режим работы: generator (только генерация), querier (только запросы), combined (генерация и запросы)")
-	system := flag.String("system", "victoria", "Система логирования: victoria, es, loki")
-	baseURL := flag.String("url", "", "Базовый URL для отправки логов/запросов")
-	duration := flag.Duration("duration", 5*time.Minute, "Продолжительность теста")
-	enableMetrics := flag.Bool("metrics", true, "Включить метрики Prometheus")
-	metricsPort := flag.Int("metrics-port", 9090, "Порт для метрик Prometheus")
-	verbose := flag.Bool("verbose", false, "Подробный вывод")
-
-	// Флаги для генератора
-	rps := flag.Int("rps", 10, "Количество запросов (на запись) в секунду")
-	bulkSize := flag.Int("bulk-size", 100, "Количество логов в одном запросе")
-	generatorWorkers := flag.Int("generator-workers", 0, "Количество рабочих горутин для генератора (0 = авто)")
-
-	// Распределение типов логов
-	webAccessWeight := flag.Int("web-access-weight", 60, "Вес для логов web_access")
-	webErrorWeight := flag.Int("web-error-weight", 10, "Вес для логов web_error")
-	applicationWeight := flag.Int("application-weight", 20, "Вес для логов application")
-	metricWeight := flag.Int("metric-weight", 5, "Вес для логов metric")
-	eventWeight := flag.Int("event-weight", 5, "Вес для логов event")
-
-	// Флаги для querier
-	qps := flag.Int("qps", 5, "Количество запросов (на чтение) в секунду")
-	querierWorkers := flag.Int("querier-workers", 0, "Количество рабочих горутин для запросов (0 = авто)")
-	queryTimeout := flag.Duration("query-timeout", 10*time.Second, "Таймаут для запросов")
-	
-	// Типы запросов и их распределение
-	simpleQueryWeight := flag.Int("simple-query-weight", 70, "Вес для простых запросов")
-	complexQueryWeight := flag.Int("complex-query-weight", 20, "Вес для сложных запросов")
-	analyticalQueryWeight := flag.Int("analytical-query-weight", 10, "Вес для аналитических запросов")
-	timeseriesQueryWeight := flag.Int("timeseries-query-weight", 0, "Вес для запросов временных рядов")
-
-	// Дополнительные параметры
-	maxRetries := flag.Int("max-retries", 3, "Максимальное количество повторных попыток")
-	retryDelay := flag.Duration("retry-delay", 500*time.Millisecond, "Задержка между повторными попытками")
+	// Параметры командной строки
+	configPath := flag.String("config", defaultConfigPath, "Путь к файлу конфигурации YAML")
+	legacyMode := flag.Bool("legacy", false, "Использовать режим аргументов командной строки вместо YAML")
+	defaultConfig := flag.Bool("default-config", false, "Создать конфигурацию по умолчанию и выйти")
 
 	flag.Parse()
 
-	// Проверяем и устанавливаем URL по умолчанию если не указан
-	if *baseURL == "" {
-		switch *system {
-		case "victoria":
-			*baseURL = "http://localhost:8428"
-		case "es":
-			*baseURL = "http://localhost:9200"
-		case "loki":
-			*baseURL = "http://localhost:3100"
-		default:
-			log.Fatalf("Неизвестная система логирования: %s", *system)
+	// Создание конфигурации по умолчанию, если запрошено
+	if *defaultConfig {
+		config := getDefaultConfig()
+		if err := common.SaveConfig(config, *configPath); err != nil {
+			log.Fatalf("Ошибка создания конфигурации по умолчанию: %v", err)
+		}
+		fmt.Printf("Конфигурация по умолчанию создана в файле: %s\n", *configPath)
+		return
+	}
+
+	// Определение каталога с текущим исполняемым файлом
+	execDir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		log.Fatalf("Не удалось определить текущий каталог: %v", err)
+	}
+
+	// Если запрошен режим legacy, используем аргументы командной строки
+	if *legacyMode {
+		log.Println("Запуск в режиме legacy с использованием аргументов командной строки")
+		runInLegacyMode()
+		return
+	}
+
+	// Загружаем конфигурацию из YAML
+	configFullPath := *configPath
+	if !filepath.IsAbs(configFullPath) {
+		configFullPath = filepath.Join(execDir, *configPath)
+	}
+
+	config, err := common.LoadConfig(configFullPath)
+	if err != nil {
+		// Если файл не существует и это стандартный путь, создаем конфигурацию по умолчанию
+		if os.IsNotExist(err) && *configPath == defaultConfigPath {
+			fmt.Println("Файл конфигурации не найден, создаем конфигурацию по умолчанию")
+			config = getDefaultConfig()
+			if err := common.SaveConfig(config, configFullPath); err != nil {
+				log.Fatalf("Ошибка создания конфигурации по умолчанию: %v", err)
+			}
+			fmt.Printf("Конфигурация по умолчанию создана в файле: %s\n", configFullPath)
+		} else {
+			log.Fatalf("Ошибка загрузки конфигурации: %v", err)
 		}
 	}
 
-	// Настройка распределения типов логов
-	logTypeDistribution := map[string]int{
-		"web_access":  *webAccessWeight,
-		"web_error":   *webErrorWeight,
-		"application": *applicationWeight,
-		"metric":      *metricWeight,
-		"event":       *eventWeight,
+	// Создаем структуру для статистики
+	stats := &common.Stats{
+		StartTime: time.Now(),
 	}
 
-	// Настройка распределения типов запросов
-	queryTypeDistribution := map[querypkg.QueryType]int{
-		querypkg.SimpleQuery:     *simpleQueryWeight,
-		querypkg.ComplexQuery:    *complexQueryWeight,
-		querypkg.AnalyticalQuery: *analyticalQueryWeight,
-		querypkg.TimeSeriesQuery: *timeseriesQueryWeight,
+	// Запускаем нужные компоненты в зависимости от режима
+	switch config.Mode {
+	case modeGeneratorOnly:
+		fmt.Println("Запуск в режиме генератора логов")
+		runGeneratorWithConfig(config, stats)
+	case modeQuerierOnly:
+		fmt.Println("Запуск в режиме клиента запросов")
+		if err := runQuerierWithConfig(config, stats); err != nil {
+			log.Fatalf("Ошибка при запуске клиента запросов: %v", err)
+		}
+	case modeCombined:
+		fmt.Println("Запуск в комбинированном режиме (генератор и запросы)")
+		go runGeneratorWithConfig(config, stats)
+		if err := runQuerierWithConfig(config, stats); err != nil {
+			log.Fatalf("Ошибка при запуске клиента запросов: %v", err)
+		}
+	default:
+		log.Fatalf("Неизвестный режим работы: %s", config.Mode)
+	}
+}
+
+// Создание конфигурации по умолчанию
+func getDefaultConfig() *common.Config {
+	return &common.Config{
+		Mode:            "generator",
+		System:          "victoria",
+		DurationSeconds: 60,
+		Generator: common.GeneratorConfig{
+			URLLoki:         "http://loki:3100/loki/api/v1/push",
+			URLES:           "http://elasticsearch:9200/_bulk",
+			URLVictoria:     "http://victoria-logs:9428/api/v1/write",
+			RPS:             100,
+			BulkSize:        10,
+			WorkerCount:     4,
+			ConnectionCount: 10,
+			Distribution: map[string]int{
+				"web_access":  60,
+				"web_error":   10,
+				"application": 20,
+				"event":       5,
+				"metric":      5,
+			},
+			MaxRetries:   3,
+			RetryDelayMs: 500,
+			Verbose:      false,
+		},
+		Querier: common.QuerierConfig{
+			URLLoki:      "http://loki:3100",
+			URLES:        "http://elasticsearch:9200",
+			URLVictoria:  "http://victoria-logs:9428",
+			RPS:          10,
+			WorkerCount:  2,
+			MaxRetries:   3,
+			RetryDelayMs: 500,
+			Verbose:      false,
+			Distribution: map[string]int{
+				"exact_match":   30,
+				"time_range":    40,
+				"label_filter":  20,
+				"complex_query": 10,
+			},
+		},
+		Metrics: common.MetricsConfig{
+			Enabled: true,
+			Port:    9090,
+		},
+	}
+}
+
+// Запуск в режиме аргументов командной строки (legacy)
+func runInLegacyMode() {
+	// Основные флаги
+	mode := flag.String("mode", "generator", "Режим работы: generator (только генерация), querier (только запросы), combined (генерация и запросы)")
+	system := flag.String("system", "victoria", "Система логирования: loki, elasticsearch, victoria")
+
+	// Общие параметры
+	duration := flag.Int("duration", 60, "Длительность работы (в секундах, 0 = бесконечно)")
+
+	// Параметры для режима генерации
+	rps := flag.Int("rps", 100, "Запросов в секунду (для генератора)")
+	bulkSize := flag.Int("bulk-size", 10, "Количество логов в одном запросе")
+	workerCount := flag.Int("worker-count", 4, "Количество параллельных воркеров")
+	connectionCount := flag.Int("connection-count", 10, "Количество соединений")
+	maxRetries := flag.Int("max-retries", 3, "Максимальное количество повторных попыток")
+	retryDelay := flag.Int("retry-delay", 500, "Задержка между повторными попытками (в миллисекундах)")
+	verbose := flag.Bool("verbose", false, "Подробный вывод")
+
+	// Веса типов логов
+	webAccessWeight := flag.Int("web-access-weight", 60, "Вес логов типа web_access")
+	webErrorWeight := flag.Int("web-error-weight", 10, "Вес логов типа web_error")
+	applicationWeight := flag.Int("application-weight", 20, "Вес логов типа application")
+	eventWeight := flag.Int("event-weight", 5, "Вес логов типа event")
+	metricWeight := flag.Int("metric-weight", 5, "Вес логов типа metric")
+
+	// Параметры для режима запросов
+	qps := flag.Int("qps", 10, "Запросов в секунду (для клиента запросов)")
+
+	// Веса типов запросов
+	exactMatchWeight := flag.Int("exact-match-weight", 30, "Вес запросов типа exact_match")
+	timeRangeWeight := flag.Int("time-range-weight", 40, "Вес запросов типа time_range")
+	labelFilterWeight := flag.Int("label-filter-weight", 20, "Вес запросов типа label_filter")
+	complexQueryWeight := flag.Int("complex-query-weight", 10, "Вес запросов типа complex_query")
+
+	// Параметры метрик
+	metricsEnabled := flag.Bool("enable-metrics", true, "Включить метрики Prometheus")
+	metricsPort := flag.Int("metrics-port", 9090, "Порт для сервера метрик Prometheus")
+
+	// Повторный разбор флагов, так как они уже были разобраны выше
+	flag.CommandLine.Parse(os.Args[1:])
+
+	// Создаем конфигурацию на основе аргументов командной строки
+	config := &common.Config{
+		Mode:            *mode,
+		System:          *system,
+		DurationSeconds: *duration,
+		Generator: common.GeneratorConfig{
+			URLLoki:         "http://loki:3100/loki/api/v1/push",
+			URLES:           "http://elasticsearch:9200/_bulk",
+			URLVictoria:     "http://victoria-logs:9428/api/v1/write",
+			RPS:             *rps,
+			BulkSize:        *bulkSize,
+			WorkerCount:     *workerCount,
+			ConnectionCount: *connectionCount,
+			Distribution: map[string]int{
+				"web_access":  *webAccessWeight,
+				"web_error":   *webErrorWeight,
+				"application": *applicationWeight,
+				"event":       *eventWeight,
+				"metric":      *metricWeight,
+			},
+			MaxRetries:   *maxRetries,
+			RetryDelayMs: *retryDelay,
+			Verbose:      *verbose,
+		},
+		Querier: common.QuerierConfig{
+			URLLoki:      "http://loki:3100",
+			URLES:        "http://elasticsearch:9200",
+			URLVictoria:  "http://victoria-logs:9428",
+			RPS:          *qps,
+			WorkerCount:  *workerCount,
+			MaxRetries:   *maxRetries,
+			RetryDelayMs: *retryDelay,
+			Verbose:      *verbose,
+			Distribution: map[string]int{
+				"exact_match":   *exactMatchWeight,
+				"time_range":    *timeRangeWeight,
+				"label_filter":  *labelFilterWeight,
+				"complex_query": *complexQueryWeight,
+			},
+		},
+		Metrics: common.MetricsConfig{
+			Enabled: *metricsEnabled,
+			Port:    *metricsPort,
+		},
 	}
 
-	// Вывод информации о режиме работы
-	fmt.Printf("=== Инструмент нагрузочного тестирования ===\n")
-	fmt.Printf("Режим: %s\n", *mode)
-	fmt.Printf("Система: %s\n", *system)
-	fmt.Printf("URL: %s\n", *baseURL)
-	fmt.Printf("Продолжительность: %s\n", *duration)
-	fmt.Printf("=======================\n\n")
-
-	// Запускаем Prometheus сервер, если метрики включены
-	if *enableMetrics {
-		common.InitPrometheus()
-		common.StartMetricsServer(*metricsPort)
-		fmt.Printf("Prometheus метрики доступны на порту %d\n", *metricsPort)
+	// Создаем структуру для статистики
+	stats := &common.Stats{
+		StartTime: time.Now(),
 	}
 
-	// Создаем общую статистику
-	stats := common.NewStats()
-
-	// Запуск в зависимости от режима
+	// Запускаем нужные компоненты в зависимости от режима
 	switch *mode {
 	case modeGeneratorOnly:
-		runGenerator(*system, *baseURL, *rps, *duration, *bulkSize, *generatorWorkers,
-			logTypeDistribution, *maxRetries, *retryDelay, *verbose, stats)
-
+		fmt.Println("Запуск в режиме генератора логов (legacy)")
+		runGeneratorWithConfig(config, stats)
 	case modeQuerierOnly:
-		runQuerier(*system, *baseURL, *qps, *duration, *querierWorkers,
-			queryTypeDistribution, *queryTimeout, *maxRetries, *retryDelay, *verbose, stats)
-
+		fmt.Println("Запуск в режиме клиента запросов (legacy)")
+		runQuerierWithConfig(config, stats)
 	case modeCombined:
-		// Запускаем оба модуля параллельно
-		generatorDone := make(chan struct{})
-		querierDone := make(chan struct{})
-
-		go func() {
-			runGenerator(*system, *baseURL, *rps, *duration, *bulkSize, *generatorWorkers,
-				logTypeDistribution, *maxRetries, *retryDelay, *verbose, stats)
-			close(generatorDone)
-		}()
-
-		// Даем генератору немного времени для создания данных перед запуском запросов
-		time.Sleep(10 * time.Second)
-
-		go func() {
-			runQuerier(*system, *baseURL, *qps, *duration, *querierWorkers,
-				queryTypeDistribution, *queryTimeout, *maxRetries, *retryDelay, *verbose, stats)
-			close(querierDone)
-		}()
-
-		// Ждем завершения обоих модулей
-		<-generatorDone
-		<-querierDone
-
+		fmt.Println("Запуск в комбинированном режиме - генератор и запросы (legacy)")
+		go runGeneratorWithConfig(config, stats)
+		runQuerierWithConfig(config, stats)
 	default:
 		log.Fatalf("Неизвестный режим работы: %s", *mode)
 	}
-
-	// Вывод общей статистики
-	stats.PrintSummary()
-	fmt.Println("Тест завершен!")
 }
 
-// Функция запуска генератора логов
-func runGenerator(mode, baseURL string, rps int, duration time.Duration, bulkSize, workerCount int,
-	logTypeDistribution map[string]int, maxRetries int, retryDelay time.Duration, verbose bool, stats *common.Stats) {
-
-	// Настройка конфигурации генератора
-	generatorConfig := generatorpkg.Config{
-		Mode:                mode,
-		BaseURL:             baseURL,
-		URL:                 baseURL,
-		RPS:                 rps,
-		Duration:            duration,
-		BulkSize:            bulkSize,
-		WorkerCount:         workerCount,
-		LogTypeDistribution: logTypeDistribution,
-		Verbose:             verbose,
-		MaxRetries:          maxRetries,
-		RetryDelay:          retryDelay,
+// Функция запуска генератора логов с новой конфигурацией
+func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
+	generatorConfig := generator.Config{
+		Mode:                "default",
+		BaseURL:             cfg.Generator.GetURL(cfg.System),
+		URL:                 cfg.Generator.GetURL(cfg.System),
+		RPS:                 cfg.Generator.RPS,
+		Duration:            time.Duration(cfg.DurationSeconds) * time.Second,
+		BulkSize:            cfg.Generator.BulkSize,
+		WorkerCount:         cfg.Generator.WorkerCount,
+		ConnectionCount:     cfg.Generator.ConnectionCount,
+		LogTypeDistribution: cfg.Generator.Distribution,
+		MaxRetries:          cfg.Generator.MaxRetries,
+		RetryDelay:          time.Duration(cfg.Generator.RetryDelayMs) * time.Millisecond,
+		Verbose:             cfg.Generator.Verbose,
+		EnableMetrics:       cfg.Metrics.Enabled,
+		MetricsPort:         cfg.Metrics.Port,
 	}
 
-	fmt.Printf("[Генератор] Запуск с RPS=%d, BulkSize=%d\n", rps, bulkSize)
+	// Включаем метрики, если нужно
+	if cfg.Metrics.Enabled {
+		generator.InitPrometheus(generatorConfig)
+		generator.StartMetricsServer(cfg.Metrics.Port, generatorConfig)
+	}
 
-	// Создаем соответствующую базу данных логов
-	db, err := logdb.CreateLogDB(generatorConfig.Mode, generatorConfig.BaseURL, logdb.Options{
+	// Создаем клиент базы данных логов
+	options := logdb.Options{
 		BatchSize:  generatorConfig.BulkSize,
-		Timeout:    10 * time.Second,
+		Timeout:    30 * time.Second, // Таймаут запросов
 		RetryCount: generatorConfig.MaxRetries,
 		RetryDelay: generatorConfig.RetryDelay,
 		Verbose:    generatorConfig.Verbose,
-	})
-
-	if err != nil {
-		log.Fatalf("Ошибка при создании базы данных логов: %v", err)
 	}
 
+	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.URL, options)
+	if err != nil {
+		log.Fatalf("Ошибка создания клиента базы данных: %v", err)
+	}
+
+	fmt.Printf("[Генератор] Запуск с RPS=%d, система=%s\n", cfg.Generator.RPS, cfg.System)
+
 	// Запускаем генератор
-	if err := generatorpkg.RunGenerator(generatorConfig, db, stats); err != nil {
+	if err := generator.RunGenerator(generatorConfig, db); err != nil {
 		log.Fatalf("Ошибка при запуске генератора: %v", err)
 	}
 }
 
-// Функция запуска модуля запросов
-func runQuerier(mode, baseURL string, qps int, duration time.Duration, workerCount int,
-	queryTypeDistribution map[querypkg.QueryType]int, queryTimeout time.Duration,
-	maxRetries int, retryDelay time.Duration, verbose bool, stats *common.Stats) {
+// runQuerierWithConfig запускает клиент запросов с новой конфигурацией из YAML
+func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
+	log.Printf("Запуск клиента запросов для системы %s\n", config.System)
 
-	// Настройка конфигурации модуля запросов
-	querierConfig := querypkg.QueryConfig{
-		Mode:                mode,
-		BaseURL:             baseURL,
-		QPS:                 qps,
-		Duration:            duration,
-		WorkerCount:         workerCount,
-		QueryTypeDistribution: queryTypeDistribution,
-		QueryTimeout:        queryTimeout,
-		MaxRetries:          maxRetries,
-		RetryDelay:          retryDelay,
-		Verbose:             verbose,
+	// Определяем URL для выбранной системы
+	var baseURL string
+	switch config.System {
+	case "victorialogs", "victoria":
+		baseURL = config.Querier.URLVictoria
+	case "elasticsearch", "es":
+		baseURL = config.Querier.URLES
+	case "loki":
+		baseURL = config.Querier.URLLoki
+	default:
+		return fmt.Errorf("неизвестная система логирования: %s", config.System)
 	}
 
-	fmt.Printf("[Запросник] Запуск с QPS=%d\n", qps)
+	// Создаем опции для исполнителя запросов
+	options := models.Options{
+		Timeout:    10 * time.Second, // По умолчанию 10 секунд
+		RetryCount: config.Querier.MaxRetries,
+		RetryDelay: time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
+		Verbose:    config.Querier.Verbose,
+	}
 
-	// Создаем исполнитель запросов
-	executor, err := querypkg.CreateQueryExecutor(mode, baseURL, querypkg.Options{
-		Timeout:    queryTimeout,
-		RetryCount: maxRetries,
-		RetryDelay: retryDelay,
-		Verbose:    verbose,
-	})
-
+	// Создаем исполнитель запросов для выбранной системы
+	executor, err := go_querier.CreateQueryExecutor(config.System, baseURL, options)
 	if err != nil {
-		log.Fatalf("Ошибка при создании исполнителя запросов: %v", err)
+		return fmt.Errorf("ошибка создания исполнителя запросов: %v", err)
 	}
+
+	// Создаем конфигурацию для модуля запросов
+	queryConfig := go_querier.QueryConfig{
+		Mode:            config.System,
+		BaseURL:         baseURL,
+		QPS:             config.Querier.RPS,
+		DurationSeconds: config.DurationSeconds,
+		WorkerCount:     config.Querier.WorkerCount,
+		QueryTypeDistribution: map[models.QueryType]int{
+			models.SimpleQuery:     config.Querier.Distribution["simple"],
+			models.ComplexQuery:    config.Querier.Distribution["complex"],
+			models.AnalyticalQuery: config.Querier.Distribution["analytical"],
+			models.TimeSeriesQuery: config.Querier.Distribution["timeseries"],
+		},
+		QueryTimeout: 10 * time.Second, // По умолчанию 10 секунд
+		MaxRetries:   config.Querier.MaxRetries,
+		RetryDelayMs: config.Querier.RetryDelayMs,
+		Verbose:      config.Querier.Verbose,
+	}
+
+	log.Printf("[Запросы] Запуск с QPS=%d, система=%s\n", config.Querier.RPS, config.System)
 
 	// Запускаем модуль запросов
-	if err := querypkg.RunQuerier(querierConfig, executor, stats); err != nil {
-		log.Fatalf("Ошибка при запуске модуля запросов: %v", err)
-	}
+	return go_querier.RunQuerier(queryConfig, executor, stats)
 }
