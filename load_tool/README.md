@@ -48,7 +48,7 @@ Each backend has specific configuration options:
 #### Usage
 
 ```bash
-cd shared/go_generator
+cd load_tool/go_generator
 docker-compose up -d
 ```
 

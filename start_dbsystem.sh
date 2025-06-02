@@ -226,7 +226,7 @@ stop_generator() {
     echo "Stopping Log Generator..."
     
     # Stop the generator
-    cd shared/go_generator
+    cd load_tool/go_generator
     if [ -f "docker-compose.yml" ]; then
         docker-compose down
         echo "Log Generator stopped successfully!"
@@ -241,7 +241,7 @@ start_generator() {
     echo "Starting Log Generator..."
     
     # Read generator environment variables
-    cd shared/go_generator
+    cd load_tool/go_generator
     read_env_file ".env"
     cd - > /dev/null
     
@@ -256,7 +256,7 @@ start_generator() {
     export GENERATOR_TARGET=$DB_SYSTEM
     
     # Start the log generator
-    cd shared/go_generator
+    cd load_tool/go_generator
     if [ -f "docker-compose.yml" ]; then
         docker-compose up -d
         echo "Log Generator started successfully!"
