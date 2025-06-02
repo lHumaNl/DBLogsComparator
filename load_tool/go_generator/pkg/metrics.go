@@ -6,8 +6,8 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 )
 
-// Объявляем переменные для метрик, но не инициализируем их сразу
-// Это позволит избежать конфликтов при инициализации
+// Declare variables for metrics, but don't initialize them immediately
+// This will help avoid conflicts during initialization
 var (
 	RequestsTotal   *prometheus.CounterVec
 	LogsTotal       *prometheus.CounterVec
@@ -17,19 +17,19 @@ var (
 	LPSGauge        prometheus.Gauge
 	BatchSizeGauge  prometheus.Gauge
 
-	// Флаг, показывающий, были ли инициализированы метрики
+	// Flag indicating whether metrics have been initialized
 	metricsInitialized bool
 )
 
-// InitPrometheus инициализирует метрики Prometheus
+// InitPrometheus initializes Prometheus metrics
 func InitPrometheus(config Config) {
-	// Проверяем, не были ли уже инициализированы метрики
+	// Check if metrics have already been initialized
 	if metricsInitialized {
 		return
 	}
 
-	// Используем метрики из common, если они уже инициализированы
-	// Это предотвратит дублирование регистрации
+	// Use metrics from common if they're already initialized
+	// This prevents duplicate registration
 	RequestsTotal = common.RequestsTotal
 	LogsTotal = common.LogsTotal
 	RequestDuration = common.RequestDuration
@@ -38,7 +38,7 @@ func InitPrometheus(config Config) {
 	LPSGauge = common.LPSGauge
 	BatchSizeGauge = common.BatchSizeGauge
 
-	// Вызываем инициализацию метрик из общего пакета
+	// Call metrics initialization from the common package
 	commonConfig := &common.Config{
 		Generator: common.GeneratorConfig{
 			BulkSize: config.BulkSize,
@@ -46,12 +46,12 @@ func InitPrometheus(config Config) {
 	}
 	common.InitGeneratorMetrics(commonConfig)
 
-	// Устанавливаем флаг инициализации
+	// Set initialization flag
 	metricsInitialized = true
 }
 
-// StartMetricsServer запускает HTTP-сервер для метрик Prometheus
+// StartMetricsServer starts an HTTP server for Prometheus metrics
 func StartMetricsServer(metricsPort int, config Config) {
-	// Используем общую реализацию сервера метрик
+	// Use common implementation of metrics server
 	common.StartMetricsServer(metricsPort)
 }

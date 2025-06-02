@@ -6,7 +6,7 @@ import (
 )
 
 func TestConfig(t *testing.T) {
-	// Проверка создания и установки конфигурации
+	// Check creation and configuration setup
 	config := Config{
 		Mode:                "victoria",
 		BaseURL:             "http://localhost:8428",
@@ -24,7 +24,7 @@ func TestConfig(t *testing.T) {
 		MetricsPort:         9090,
 	}
 
-	// Проверка значений конфигурации
+	// Check configuration values
 	if config.Mode != "victoria" {
 		t.Errorf("Expected Mode to be 'victoria', got '%s'", config.Mode)
 	}
@@ -47,12 +47,12 @@ func TestConfig(t *testing.T) {
 }
 
 func TestStats(t *testing.T) {
-	// Проверка инициализации и обновления статистики
+	// Check statistics initialization and updates
 	stats := &Stats{
 		StartTime: time.Now(),
 	}
 
-	// Проверка начальных значений
+	// Check initial values
 	if stats.TotalRequests != 0 {
 		t.Errorf("Initial TotalRequests should be 0, got %d", stats.TotalRequests)
 	}

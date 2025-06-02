@@ -7,92 +7,92 @@ import (
 )
 
 func TestBufferPool(t *testing.T) {
-	// Инициализация пула буферов
+	// Initialize buffer pool
 	pool := NewBufferPool()
-	
-	// Получение буфера из пула
+
+	// Get buffer from pool
 	buf := pool.Get()
 	if buf == nil {
 		t.Fatal("BufferPool.Get() returned nil buffer")
 	}
-	
-	// Проверка, что буфер пуст
+
+	// Check that buffer is empty
 	if buf.Len() != 0 {
-		t.Errorf("Новый буфер из пула должен быть пуст, размер: %d", buf.Len())
+		t.Errorf("New buffer from pool should be empty, size: %d", buf.Len())
 	}
-	
-	// Запись данных в буфер
+
+	// Write data to buffer
 	testData := "Test data for buffer"
 	_, err := buf.WriteString(testData)
 	if err != nil {
-		t.Fatalf("Ошибка записи в буфер: %v", err)
+		t.Fatalf("Error writing to buffer: %v", err)
 	}
-	
-	// Проверка содержимого буфера
+
+	// Check buffer content
 	if buf.String() != testData {
-		t.Errorf("Ожидалось содержимое буфера '%s', получено '%s'", testData, buf.String())
+		t.Errorf("Expected buffer content '%s', got '%s'", testData, buf.String())
 	}
-	
-	// Возврат буфера в пул
+
+	// Return buffer to pool
 	pool.Put(buf)
-	
-	// Получение другого буфера
+
+	// Get another buffer
 	buf2 := pool.Get()
 	if buf2 == nil {
 		t.Fatal("BufferPool.Get() returned nil buffer on second call")
 	}
-	
-	// Проверка, что буфер был сброшен
+
+	// Check that buffer was reset
 	if buf2.Len() != 0 {
-		t.Errorf("Буфер после возврата в пул должен быть сброшен, размер: %d", buf2.Len())
+		t.Errorf("Buffer after return to pool should be reset, size: %d", buf2.Len())
 	}
 }
 
 func TestBufferPoolConcurrent(t *testing.T) {
-	// Тестирование пула буферов при конкурентном использовании
+	// Test buffer pool with concurrent usage
 	pool := NewBufferPool()
 	const goroutines = 100
 	const iterations = 10
-	
+
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	
+
 	for i := 0; i < goroutines; i++ {
 		go func(id int) {
 			defer wg.Done()
-			
+
 			for j := 0; j < iterations; j++ {
-				// Получение буфера
+				// Get buffer
 				buf := pool.Get()
 				if buf == nil {
-					t.Errorf("Горутина %d: BufferPool.Get() вернула nil в итерации %d", id, j)
+					t.Errorf("Goroutine %d: BufferPool.Get() returned nil in iteration %d", id, j)
 					continue
 				}
-				
-				// Запись данных
+
+				// Write data
 				data := []byte("Test data from goroutine")
 				_, err := buf.Write(data)
 				if err != nil {
-					t.Errorf("Горутина %d: Ошибка записи данных: %v", id, err)
+					t.Errorf("Goroutine %d: Error writing data: %v", id, err)
 				}
-				
-				// Проверка данных
+
+				// Check data
 				if !bytes.Contains(buf.Bytes(), data) {
-					t.Errorf("Горутина %d: Данные не были записаны корректно", id)
+					t.Errorf("Goroutine %d: Data was not written correctly", id)
 				}
-				
-				// Возврат буфера
+
+				// Return buffer
 				pool.Put(buf)
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 }
 
 func BenchmarkBufferPool(b *testing.B) {
 	pool := NewBufferPool()
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf := pool.Get()
@@ -101,11 +101,11 @@ func BenchmarkBufferPool(b *testing.B) {
 	}
 }
 
-// Сравнительный тест для оценки производительности пула буферов
+// Comparative test to evaluate buffer pool performance
 func BenchmarkBufferWithoutPool(b *testing.B) {
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf := &bytes.Buffer{}
 		buf.WriteString("Benchmark test data that simulates a typical log entry with some realistic content")
-		// без возврата в пул буфер будет собран сборщиком мусора
 	}
 }

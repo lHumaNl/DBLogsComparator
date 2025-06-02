@@ -10,7 +10,7 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
 )
 
-// CreateBulkPayload создает пакет логов для отправки в базу данных
+// CreateBulkPayload creates a batch of logs to send to the database
 func CreateBulkPayload(config Config, bufferPool *BufferPool) []logdb.LogEntry {
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 	logs := make([]logdb.LogEntry, 0, config.BulkSize)
@@ -19,7 +19,7 @@ func CreateBulkPayload(config Config, bufferPool *BufferPool) []logdb.LogEntry {
 		logType := SelectRandomLogType(config.LogTypeDistribution)
 		logObject := GenerateLog(logType, timestamp)
 
-		// Преобразуем в JSON и обратно в map[string]interface{}
+		// Convert to JSON and back to map[string]interface{}
 		logJSON, err := json.Marshal(logObject)
 		if err != nil {
 			continue
@@ -36,20 +36,20 @@ func CreateBulkPayload(config Config, bufferPool *BufferPool) []logdb.LogEntry {
 	return logs
 }
 
-// Worker обрабатывает задачи из канала jobs
+// Worker processes tasks from the jobs channel
 func Worker(id int, jobs <-chan struct{}, stats *Stats, config Config, db logdb.LogDB, bufferPool *BufferPool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for range jobs {
-		// Создаем пакет логов
+		// Create a batch of logs
 		logs := CreateBulkPayload(config, bufferPool)
 
-		// Отправляем логи в базу данных
+		// Send logs to the database
 		startTime := time.Now()
 		err := db.SendLogs(logs)
 		duration := time.Since(startTime).Seconds()
 
-		// Обновляем метрики и статистику
+		// Update metrics and statistics
 		if err != nil {
 			atomic.AddInt64(&stats.FailedRequests, 1)
 			if config.Verbose {
@@ -68,7 +68,7 @@ func Worker(id int, jobs <-chan struct{}, stats *Stats, config Config, db logdb.
 				RequestDuration.WithLabelValues("success", db.Name()).Observe(duration)
 				RequestsTotal.WithLabelValues("success", db.Name()).Inc()
 
-				// Увеличиваем счетчики для каждого типа лога
+				// Increment counters for each log type
 				logCounts := make(map[string]int)
 				for _, log := range logs {
 					if logType, ok := log["log_type"].(string); ok {
@@ -86,7 +86,7 @@ func Worker(id int, jobs <-chan struct{}, stats *Stats, config Config, db logdb.
 	}
 }
 
-// StatsReporter выводит статистику работы
+// StatsReporter outputs operational statistics
 func StatsReporter(stats *Stats, stopChan <-chan struct{}, config Config) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -94,7 +94,7 @@ func StatsReporter(stats *Stats, stopChan <-chan struct{}, config Config) {
 	for {
 		select {
 		case <-ticker.C:
-			// Расчет текущих значений
+			// Calculate current values
 			elapsed := time.Since(stats.StartTime).Seconds()
 			totalReqs := atomic.LoadInt64(&stats.TotalRequests)
 			successReqs := atomic.LoadInt64(&stats.SuccessfulRequests)
@@ -105,14 +105,14 @@ func StatsReporter(stats *Stats, stopChan <-chan struct{}, config Config) {
 			currentRPS := float64(totalReqs) / elapsed
 			currentLPS := float64(totalLogs) / elapsed
 
-			// Обновление метрик
+			// Update metrics
 			if config.EnableMetrics {
 				RPSGauge.Set(currentRPS)
 				LPSGauge.Set(currentLPS)
 			}
 
-			// Вывод статистики
-			fmt.Printf("\rВремя: %.1f с | Запросы: %d (%.1f/с) | Логи: %d (%.1f/с) | Успех: %.1f%% | Ошибки: %.1f%% | Повторы: %d  ",
+			// Output statistics
+			fmt.Printf("\rTime: %.1f s | Requests: %d (%.1f/s) | Logs: %d (%.1f/s) | Success: %.1f%% | Errors: %.1f%% | Retries: %d  ",
 				elapsed, totalReqs, currentRPS, totalLogs, currentLPS,
 				float64(successReqs)/float64(totalReqs+1)*100,
 				float64(failedReqs)/float64(totalReqs+1)*100,
@@ -124,37 +124,37 @@ func StatsReporter(stats *Stats, stopChan <-chan struct{}, config Config) {
 	}
 }
 
-// RunGenerator запускает генератор логов
+// RunGenerator starts the log generator
 func RunGenerator(config Config, db logdb.LogDB) error {
-	// Инициализация статистики
+	// Initialize statistics
 	stats := &Stats{
 		StartTime: time.Now(),
 	}
 
-	// Инициализация пулов
+	// Initialize pools
 	bufferPool := NewBufferPool()
 
-	// Инициализация каналов и горутин
+	// Initialize channels and goroutines
 	jobs := make(chan struct{}, config.RPS*2)
 	stopChan := make(chan struct{})
 
-	// Запуск сервера метрик, если включено
+	// Start metrics server if enabled
 	if config.EnableMetrics {
 		StartMetricsServer(config.MetricsPort, config)
 		InitPrometheus(config)
 	}
 
-	// Запуск горутины для отображения статистики
+	// Start goroutine for displaying statistics
 	go StatsReporter(stats, stopChan, config)
 
-	// Запуск рабочих горутин
+	// Start worker goroutines
 	var wg sync.WaitGroup
 	for w := 1; w <= config.WorkerCount; w++ {
 		wg.Add(1)
 		go Worker(w, jobs, stats, config, db, bufferPool, &wg)
 	}
 
-	// Основной цикл генерации нагрузки
+	// Main load generation loop
 	tickInterval := time.Second / time.Duration(config.RPS)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -170,7 +170,7 @@ func RunGenerator(config Config, db logdb.LogDB) error {
 	wg.Wait()
 	close(stopChan)
 
-	// Вывод итоговой статистики
+	// Output final statistics
 	elapsed := time.Since(stats.StartTime).Seconds()
 	totalReqs := atomic.LoadInt64(&stats.TotalRequests)
 	successReqs := atomic.LoadInt64(&stats.SuccessfulRequests)
@@ -181,13 +181,13 @@ func RunGenerator(config Config, db logdb.LogDB) error {
 	currentRPS := float64(totalReqs) / elapsed
 	currentLPS := float64(totalLogs) / elapsed
 
-	fmt.Printf("\n\nТест завершен!\n")
-	fmt.Printf("Продолжительность: %.2f секунд\n", elapsed)
-	fmt.Printf("Всего запросов: %d (%.2f/с)\n", totalReqs, currentRPS)
-	fmt.Printf("Всего логов: %d (%.2f/с)\n", totalLogs, currentLPS)
-	fmt.Printf("Успешных запросов: %d (%.2f%%)\n", successReqs, float64(successReqs)/float64(totalReqs)*100)
-	fmt.Printf("Неудачных запросов: %d (%.2f%%)\n", failedReqs, float64(failedReqs)/float64(totalReqs)*100)
-	fmt.Printf("Повторных попыток: %d\n", retriedReqs)
+	fmt.Printf("\n\nTest completed!\n")
+	fmt.Printf("Duration: %.2f seconds\n", elapsed)
+	fmt.Printf("Total requests: %d (%.2f/s)\n", totalReqs, currentRPS)
+	fmt.Printf("Total logs: %d (%.2f/s)\n", totalLogs, currentLPS)
+	fmt.Printf("Successful requests: %d (%.2f%%)\n", successReqs, float64(successReqs)/float64(totalReqs)*100)
+	fmt.Printf("Failed requests: %d (%.2f%%)\n", failedReqs, float64(failedReqs)/float64(totalReqs)*100)
+	fmt.Printf("Retry attempts: %d\n", retriedReqs)
 
 	return nil
 }
