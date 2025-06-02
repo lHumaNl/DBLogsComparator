@@ -1,13 +1,12 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
-	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -16,18 +15,18 @@ import (
 )
 
 func main() {
-	// Установка максимального количества процессоров
+	// Set maximum number of processors
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	// Инициализация генератора случайных чисел
+	// Initialize random number generator
 	rand.Seed(time.Now().UnixNano())
 
-	// Определение оптимального количества воркеров
-	// По умолчанию - количество доступных CPU * 2
+	// Determine optimal number of workers
+	// By default - number of available CPUs * 2
 	cpuCount := runtime.NumCPU()
 	defaultWorkers := cpuCount * 2
 
-	// Если установлен лимит CPU для контейнера, используем его
+	// If CPU limit is set for container, use it
 	cpuLimit := os.Getenv("CPU_LIMIT")
 	if cpuLimit != "" {
 		if limit, err := strconv.ParseFloat(cpuLimit, 64); err == nil && limit > 0 {
@@ -35,32 +34,32 @@ func main() {
 		}
 	}
 
-	// Разбор аргументов командной строки
-	mode := flag.String("mode", "victoria", "Режим работы: victoria (VictoriaLogs), es (Elasticsearch), loki (Loki)")
-	baseURL := flag.String("url", "http://localhost:8428", "Базовый URL для отправки логов")
-	rps := flag.Int("rps", 10, "Количество запросов в секунду")
-	duration := flag.Duration("duration", 1*time.Minute, "Продолжительность теста")
-	bulkSize := flag.Int("bulk-size", 100, "Количество логов в одном запросе")
-	workerCount := flag.Int("worker-count", defaultWorkers, "Количество рабочих горутин")
-	connectionCount := flag.Int("connection-count", 10, "Количество HTTP-соединений")
+	// Parse command line arguments
+	mode := flag.String("mode", "victoria", "Operation mode: victoria (VictoriaLogs), es (Elasticsearch), loki (Loki)")
+	baseURL := flag.String("url", "http://localhost:8428", "Base URL for sending logs")
+	rps := flag.Int("rps", 10, "Requests per second")
+	duration := flag.Duration("duration", 1*time.Minute, "Test duration")
+	bulkSize := flag.Int("bulk-size", 100, "Number of logs in one request")
+	workerCount := flag.Int("worker-count", defaultWorkers, "Number of worker goroutines")
+	connectionCount := flag.Int("connection-count", 10, "Number of HTTP connections")
 
-	// Распределение типов логов
-	webAccessWeight := flag.Int("web-access-weight", 60, "Вес для логов web_access")
-	webErrorWeight := flag.Int("web-error-weight", 10, "Вес для логов web_error")
-	applicationWeight := flag.Int("application-weight", 20, "Вес для логов application")
-	metricWeight := flag.Int("metric-weight", 5, "Вес для логов metric")
-	eventWeight := flag.Int("event-weight", 5, "Вес для логов event")
+	// Log type distribution
+	webAccessWeight := flag.Int("web-access-weight", 60, "Weight for web_access logs")
+	webErrorWeight := flag.Int("web-error-weight", 10, "Weight for web_error logs")
+	applicationWeight := flag.Int("application-weight", 20, "Weight for application logs")
+	metricWeight := flag.Int("metric-weight", 5, "Weight for metric logs")
+	eventWeight := flag.Int("event-weight", 5, "Weight for event logs")
 
-	verbose := flag.Bool("verbose", false, "Подробный вывод")
-	maxRetries := flag.Int("max-retries", 3, "Максимальное количество повторных попыток")
-	retryDelay := flag.Duration("retry-delay", 500*time.Millisecond, "Задержка между повторными попытками")
+	verbose := flag.Bool("verbose", false, "Verbose output")
+	maxRetries := flag.Int("max-retries", 3, "Maximum number of retry attempts")
+	retryDelay := flag.Duration("retry-delay", 500*time.Millisecond, "Delay between retry attempts")
 
-	enableMetrics := flag.Bool("enable-metrics", false, "Включить метрики Prometheus")
-	metricsPort := flag.Int("metrics-port", 9090, "Порт для метрик Prometheus")
+	enableMetrics := flag.Bool("enable-metrics", false, "Enable Prometheus metrics")
+	metricsPort := flag.Int("metrics-port", 9090, "Prometheus metrics port")
 
 	flag.Parse()
 
-	// Настройка распределения типов логов
+	// Configure log type distribution
 	logTypeDistribution := map[string]int{
 		"web_access":  *webAccessWeight,
 		"web_error":   *webErrorWeight,
@@ -69,7 +68,7 @@ func main() {
 		"event":       *eventWeight,
 	}
 
-	// Формирование конфигурации
+	// Create configuration
 	config := pkg.Config{
 		Mode:                *mode,
 		BaseURL:             *baseURL,
@@ -87,25 +86,25 @@ func main() {
 		MetricsPort:         *metricsPort,
 	}
 
-	// Вывод информации о настройках
-	fmt.Printf("=== Генератор логов ===\n")
-	fmt.Printf("Режим: %s\n", config.Mode)
+	// Output configuration information
+	fmt.Printf("=== Log Generator ===\n")
+	fmt.Printf("Mode: %s\n", config.Mode)
 	fmt.Printf("URL: %s\n", config.URL)
 	fmt.Printf("RPS: %d\n", config.RPS)
-	fmt.Printf("Продолжительность: %s\n", config.Duration)
-	fmt.Printf("Размер пакета: %d\n", config.BulkSize)
-	fmt.Printf("Рабочих горутин: %d\n", config.WorkerCount)
-	fmt.Printf("HTTP-соединений: %d\n", config.ConnectionCount)
-	fmt.Printf("Распределение типов логов: %v\n", config.LogTypeDistribution)
-	fmt.Printf("Повторных попыток: %d\n", config.MaxRetries)
-	fmt.Printf("Задержка между попытками: %s\n", config.RetryDelay)
-	fmt.Printf("Метрики Prometheus: %v\n", config.EnableMetrics)
+	fmt.Printf("Duration: %s\n", config.Duration)
+	fmt.Printf("Bulk size: %d\n", config.BulkSize)
+	fmt.Printf("Worker goroutines: %d\n", config.WorkerCount)
+	fmt.Printf("HTTP connections: %d\n", config.ConnectionCount)
+	fmt.Printf("Log type distribution: %v\n", config.LogTypeDistribution)
+	fmt.Printf("Retry attempts: %d\n", config.MaxRetries)
+	fmt.Printf("Retry delay: %s\n", config.RetryDelay)
+	fmt.Printf("Prometheus metrics: %v\n", config.EnableMetrics)
 	if config.EnableMetrics {
-		fmt.Printf("Порт метрик: %d\n", config.MetricsPort)
+		fmt.Printf("Metrics port: %d\n", config.MetricsPort)
 	}
 	fmt.Printf("=======================\n\n")
 
-	// Создаем соответствующую базу данных логов
+	// Create appropriate log database
 	db, err := logdb.CreateLogDB(config.Mode, config.BaseURL, logdb.Options{
 		BatchSize:  config.BulkSize,
 		Timeout:    10 * time.Second,
@@ -115,11 +114,11 @@ func main() {
 	})
 
 	if err != nil {
-		log.Fatalf("Ошибка при создании базы данных логов: %v", err)
+		log.Fatalf("Error creating log database: %v", err)
 	}
 
-	// Запуск генератора логов
+	// Start log generator
 	if err := pkg.RunGenerator(config, db); err != nil {
-		log.Fatalf("Ошибка при запуске генератора: %v", err)
+		log.Fatalf("Error starting generator: %v", err)
 	}
 }

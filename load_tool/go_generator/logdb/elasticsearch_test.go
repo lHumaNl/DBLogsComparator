@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TestNewElasticsearchDB проверяет создание экземпляра ElasticsearchDB
+// TestNewElasticsearchDB checks the creation of an ElasticsearchDB instance
 func TestNewElasticsearchDB(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -50,23 +50,23 @@ func TestNewElasticsearchDB(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, err := NewElasticsearchDB(tt.baseURL, tt.options)
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewElasticsearchDB() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				if db.URL != tt.wantURL {
 					t.Errorf("URL = %v, want %v", db.URL, tt.wantURL)
 				}
-				
-				// Проверяем, что HTTP-клиент создан
+
+				// Check that the HTTP client is created
 				if db.httpClient == nil {
-					t.Errorf("httpClient не инициализирован")
+					t.Errorf("httpClient is not initialized")
 				}
-				
-				// Проверяем поля из Options
+
+				// Check fields from Options
 				if db.BatchSize != tt.options.BatchSize {
 					t.Errorf("BatchSize = %v, want %v", db.BatchSize, tt.options.BatchSize)
 				}
@@ -75,10 +75,10 @@ func TestNewElasticsearchDB(t *testing.T) {
 	}
 }
 
-// TestElasticsearchDBFormatPayload проверяет форматирование данных для отправки
+// TestElasticsearchDBFormatPayload checks the formatting of data for sending
 func TestElasticsearchDBFormatPayload(t *testing.T) {
 	db, _ := NewElasticsearchDB("http://localhost:9200", Options{})
-	
+
 	logs := []LogEntry{
 		{
 			"timestamp": "2023-01-01T12:00:00Z",
@@ -93,69 +93,69 @@ func TestElasticsearchDBFormatPayload(t *testing.T) {
 			"host":      "test-host",
 		},
 	}
-	
+
 	payload, contentType := db.FormatPayload(logs)
-	
-	// Проверяем Content-Type
+
+	// Check Content-Type
 	if contentType != "application/x-ndjson" {
 		t.Errorf("contentType = %v, want %v", contentType, "application/x-ndjson")
 	}
-	
-	// Проверяем, что для каждого лога есть два объекта (индекс и сам лог)
-	// Каждый лог в Elasticsearch формате должен иметь 2 строки: index и data
+
+	// Check that for each log there are two objects (index and the log itself)
+	// Each log in Elasticsearch format should have 2 lines: index and data
 	lines := strings.Split(strings.TrimSpace(payload), "\n")
 	if len(lines) != len(logs)*2 {
-		t.Errorf("payload содержит %v строк, ожидалось %v", len(lines), len(logs)*2)
+		t.Errorf("payload contains %v lines, expected %v", len(lines), len(logs)*2)
 	}
-	
-	// Проверяем, что каждая вторая строка содержит данные из логов
+
+	// Check that each second line contains data from the logs
 	for i, log := range logs {
-		dataLineIndex := i*2 + 1 // Вторая строка для каждого лога
-		
+		dataLineIndex := i*2 + 1 // Second line for each log
+
 		for key := range log {
 			if !strings.Contains(lines[dataLineIndex], key) {
-				t.Errorf("Строка %v не содержит ключ %v", lines[dataLineIndex], key)
+				t.Errorf("Line %v does not contain key %v", lines[dataLineIndex], key)
 			}
 		}
-		
-		// Проверяем, что первая строка содержит index
+
+		// Check that the first line contains index
 		indexLine := lines[i*2]
 		if !strings.Contains(indexLine, "index") {
-			t.Errorf("Строка %v не содержит директиву index", indexLine)
+			t.Errorf("Line %v does not contain index directive", indexLine)
 		}
 	}
 }
 
-// TestElasticsearchDBSendLogs проверяет отправку логов
+// TestElasticsearchDBSendLogs checks log sending
 func TestElasticsearchDBSendLogs(t *testing.T) {
-	// Создаем экземпляр ElasticsearchDB с мок-клиентом
+	// Create an ElasticsearchDB instance with a mock client
 	db, _ := NewElasticsearchDB("http://localhost:9200", Options{
 		RetryCount: 1,
 		RetryDelay: time.Millisecond * 10,
 	})
-	
-	// Тест 1: Успешная отправка
+
+	// Test 1: Successful sending
 	t.Run("Successful Send", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок
+		// Replace HTTP client with a mock
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
-					// Проверяем URL запроса
+					// Check request URL
 					if req.URL.String() != db.URL {
-						t.Errorf("URL запроса = %v, ожидался %v", req.URL.String(), db.URL)
+						t.Errorf("Request URL = %v, expected %v", req.URL.String(), db.URL)
 					}
-					
-					// Проверяем метод запроса
+
+					// Check request method
 					if req.Method != "POST" {
-						t.Errorf("Метод запроса = %v, ожидался %v", req.Method, "POST")
+						t.Errorf("Request method = %v, expected %v", req.Method, "POST")
 					}
-					
-					// Проверяем Content-Type
+
+					// Check Content-Type
 					if req.Header.Get("Content-Type") != "application/x-ndjson" {
-						t.Errorf("Content-Type = %v, ожидался %v", req.Header.Get("Content-Type"), "application/x-ndjson")
+						t.Errorf("Content-Type = %v, expected %v", req.Header.Get("Content-Type"), "application/x-ndjson")
 					}
-					
-					// Возвращаем успешный ответ
+
+					// Return successful response
 					return &http.Response{
 						StatusCode: 200,
 						Body:       io.NopCloser(bytes.NewBufferString(`{"errors":false,"took":5}`)),
@@ -164,8 +164,8 @@ func TestElasticsearchDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": "2023-01-01T12:00:00Z",
@@ -173,19 +173,19 @@ func TestElasticsearchDBSendLogs(t *testing.T) {
 				"level":     "info",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err != nil {
-			t.Errorf("SendLogs() error = %v, ожидался nil", err)
+			t.Errorf("SendLogs() error = %v, expected nil", err)
 		}
 	})
-	
-	// Тест 2: Ошибка отправки
+
+	// Test 2: Sending error
 	t.Run("Failed Send", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок с ошибкой
+		// Replace HTTP client with an error mock
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
@@ -194,8 +194,8 @@ func TestElasticsearchDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": "2023-01-01T12:00:00Z",
@@ -203,32 +203,32 @@ func TestElasticsearchDBSendLogs(t *testing.T) {
 				"level":     "info",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err == nil {
-			t.Errorf("SendLogs() error = nil, ожидалась ошибка")
+			t.Errorf("SendLogs() error = nil, expected an error")
 		}
 	})
-	
-	// Тест 3: Ошибка в ответе Elasticsearch
+
+	// Test 3: Error in Elasticsearch response
 	t.Run("Elasticsearch Error", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок с ошибкой Elasticsearch
+		// Replace HTTP client with an Elasticsearch error mock
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
 					return &http.Response{
-						StatusCode: 400,  // Изменяем статус на 400, чтобы точно получить ошибку
+						StatusCode: 400, // Change status to 400 to ensure we get an error
 						Body:       io.NopCloser(bytes.NewBufferString(`{"errors":true,"items":[{"index":{"status":400,"error":{"type":"mapper_parsing_exception","reason":"mapping error"}}}]}`)),
 					}, nil
 				},
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": "2023-01-01T12:00:00Z",
@@ -236,35 +236,35 @@ func TestElasticsearchDBSendLogs(t *testing.T) {
 				"level":     "info",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err == nil {
-			t.Errorf("SendLogs() error = nil, ожидалась ошибка")
+			t.Errorf("SendLogs() error = nil, expected an error")
 		}
 	})
 }
 
-// TestElasticsearchDBName проверяет метод Name
+// TestElasticsearchDBName checks the Name method
 func TestElasticsearchDBName(t *testing.T) {
 	db, _ := NewElasticsearchDB("http://localhost:9200", Options{})
-	
+
 	name := db.Name()
 	expected := "Elasticsearch"
-	
+
 	if name != expected {
 		t.Errorf("Name() = %v, want %v", name, expected)
 	}
 }
 
-// TestElasticsearchDBInitializeAndClose проверяет методы Initialize и Close
+// TestElasticsearchDBInitializeAndClose checks the Initialize and Close methods
 func TestElasticsearchDBInitializeAndClose(t *testing.T) {
-	// Создаем тестовый клиент, который не делает реальных запросов
+	// Create a test client that doesn't make real requests
 	db, _ := NewElasticsearchDB("http://localhost:9200", Options{})
-	
-	// Подменяем клиент, чтобы не было реальных запросов
+
+	// Replace the client to avoid real requests
 	db.httpClient = &http.Client{
 		Transport: &MockHTTPTransport{
 			RoundTripFunc: func(req *http.Request) (*http.Response, error) {
@@ -275,16 +275,16 @@ func TestElasticsearchDBInitializeAndClose(t *testing.T) {
 			},
 		},
 	}
-	
-	// Initialize должен просто возвращать nil
+
+	// Initialize should simply return nil
 	err := db.Initialize()
 	if err != nil {
-		t.Errorf("Initialize() error = %v, ожидался nil", err)
+		t.Errorf("Initialize() error = %v, expected nil", err)
 	}
-	
-	// Close должен просто возвращать nil
+
+	// Close should simply return nil
 	err = db.Close()
 	if err != nil {
-		t.Errorf("Close() error = %v, ожидался nil", err)
+		t.Errorf("Close() error = %v, expected nil", err)
 	}
 }

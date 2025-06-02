@@ -12,109 +12,109 @@ import (
 )
 
 var (
-	// Метрики для операций записи
+	// Metrics for write operations
 	WriteRequestsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_write_requests_total",
-		Help: "Общее количество запросов на запись",
+		Help: "Total number of write requests",
 	})
 
 	WriteRequestsSuccess = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_write_requests_success",
-		Help: "Количество успешных запросов на запись",
+		Help: "Number of successful write requests",
 	})
 
 	WriteRequestsFailure = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_write_requests_failure",
-		Help: "Количество неудачных запросов на запись",
+		Help: "Number of failed write requests",
 	})
 
 	WriteLogsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_logs_total",
-		Help: "Общее количество отправленных логов",
+		Help: "Total number of logs sent",
 	})
 
 	WriteRequestsRetried = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_write_requests_retried",
-		Help: "Количество повторных попыток запросов на запись",
+		Help: "Number of retried write requests",
 	})
 
 	WriteDurationHistogram = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "load_test_write_duration_seconds",
-		Help:    "Гистограмма длительности запросов на запись",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // от 1мс до ~16с
+		Help:    "Histogram of write request durations",
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // from 1ms to ~16s
 	})
 
-	// Метрики для операций чтения
+	// Metrics for read operations
 	ReadRequestsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_read_requests_total",
-		Help: "Общее количество запросов на чтение",
+		Help: "Total number of read requests",
 	})
 
 	ReadRequestsSuccess = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_read_requests_success",
-		Help: "Количество успешных запросов на чтение",
+		Help: "Number of successful read requests",
 	})
 
 	ReadRequestsFailure = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_read_requests_failure",
-		Help: "Количество неудачных запросов на чтение",
+		Help: "Number of failed read requests",
 	})
 
 	ReadRequestsRetried = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "load_test_read_requests_retried",
-		Help: "Количество повторных попыток запросов на чтение",
+		Help: "Number of retried read requests",
 	})
 
 	ReadDurationHistogram = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "load_test_read_duration_seconds",
-		Help:    "Гистограмма длительности запросов на чтение",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // от 1мс до ~16с
+		Help:    "Histogram of read request durations",
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // from 1ms to ~16s
 	})
 
 	QueryTypeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "load_test_query_type_total",
-		Help: "Количество запросов по типам",
+		Help: "Number of requests by type",
 	}, []string{"type"})
 
 	ResultSizeHistogram = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "load_test_result_size_bytes",
-		Help:    "Гистограмма размера результатов запросов",
-		Buckets: prometheus.ExponentialBuckets(1024, 2, 10), // от 1KB до ~1MB
+		Help:    "Histogram of query result sizes",
+		Buckets: prometheus.ExponentialBuckets(1024, 2, 10), // from 1KB to ~1MB
 	})
 
 	ResultHitsHistogram = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "load_test_result_hits",
-		Help:    "Гистограмма количества результатов в запросах",
-		Buckets: prometheus.LinearBuckets(0, 10, 10), // от 0 до 90 с шагом 10
+		Help:    "Histogram of number of results in queries",
+		Buckets: prometheus.LinearBuckets(0, 10, 10), // from 0 to 90 with step 10
 	})
 
-	// Метрики по системам
+	// Metrics by system
 	OperationCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "load_test_operations_total",
-		Help: "Количество операций по типу и системе",
+		Help: "Number of operations by type and system",
 	}, []string{"type", "system"})
 
-	// Общие метрики производительности
+	// General performance metrics
 	CurrentRPS = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "load_test_current_rps",
-		Help: "Текущее количество запросов на запись в секунду",
+		Help: "Current number of write requests per second",
 	})
 
 	CurrentQPS = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "load_test_current_qps",
-		Help: "Текущее количество запросов на чтение в секунду",
+		Help: "Current number of read requests per second",
 	})
 
 	CurrentOPS = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "load_test_current_ops",
-		Help: "Общее текущее количество операций в секунду",
+		Help: "Total current number of operations per second",
 	})
 
-	// Метрики генератора логов из pkg/metrics.go
+	// Log generator metrics from pkg/metrics.go
 	RequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "log_generator_requests_total",
-			Help: "Общее количество запросов, отправленных генератором логов",
+			Help: "Total number of requests sent by the log generator",
 		},
 		[]string{"status", "destination"},
 	)
@@ -122,7 +122,7 @@ var (
 	LogsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "log_generator_logs_total",
-			Help: "Общее количество сгенерированных логов по типам",
+			Help: "Total number of generated logs by type",
 		},
 		[]string{"log_type", "destination"},
 	)
@@ -130,7 +130,7 @@ var (
 	RequestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "log_generator_request_duration_seconds",
-			Help:    "Время выполнения запросов",
+			Help:    "Request execution time",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"status", "destination"},
@@ -139,28 +139,28 @@ var (
 	RetryCounter = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "log_generator_retry_count",
-			Help: "Количество повторных попыток отправки запросов",
+			Help: "Number of request retries",
 		},
 	)
 
 	RPSGauge = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "log_generator_rps",
-			Help: "Текущее количество запросов в секунду",
+			Help: "Current number of requests per second",
 		},
 	)
 
 	LPSGauge = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "log_generator_lps",
-			Help: "Текущее количество логов в секунду",
+			Help: "Current number of logs per second",
 		},
 	)
 
 	BatchSizeGauge = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "log_generator_batch_size",
-			Help: "Размер пакета логов",
+			Help: "Log batch size",
 		},
 	)
 )
@@ -169,49 +169,49 @@ var (
 	writeRequestsCount int64
 	readRequestsCount  int64
 
-	// Флаг, показывающий, был ли уже запущен сервер метрик
+	// Flag indicating whether the metrics server has already been started
 	metricsServerStarted bool
 )
 
-// IncrementWriteRequests увеличивает счетчик запросов записи
+// IncrementWriteRequests increments the write requests counter
 func IncrementWriteRequests() {
 	WriteRequestsTotal.Inc()
 	atomic.AddInt64(&writeRequestsCount, 1)
 }
 
-// IncrementReadRequests увеличивает счетчик запросов чтения
+// IncrementReadRequests increments the read requests counter
 func IncrementReadRequests() {
 	ReadRequestsTotal.Inc()
 	atomic.AddInt64(&readRequestsCount, 1)
 }
 
-// IncrementSuccessfulWrite увеличивает счетчик успешных запросов записи
+// IncrementSuccessfulWrite increments the successful write requests counter
 func IncrementSuccessfulWrite() {
 	WriteRequestsSuccess.Inc()
 }
 
-// IncrementFailedWrite увеличивает счетчик неудачных запросов записи
+// IncrementFailedWrite increments the failed write requests counter
 func IncrementFailedWrite() {
 	WriteRequestsFailure.Inc()
 }
 
-// IncrementSuccessfulRead увеличивает счетчик успешных запросов чтения
+// IncrementSuccessfulRead increments the successful read requests counter
 func IncrementSuccessfulRead() {
 	ReadRequestsSuccess.Inc()
 }
 
-// IncrementFailedRead увеличивает счетчик неудачных запросов чтения
+// IncrementFailedRead increments the failed read requests counter
 func IncrementFailedRead() {
 	ReadRequestsFailure.Inc()
 }
 
-// InitPrometheus инициализирует регистрацию метрик
+// InitPrometheus initializes metrics registration
 func InitPrometheus() {
-	// Запускаем отдельную горутину для обновления метрик в реальном времени
+	// Start a separate goroutine for real-time metrics updates
 	go updateRealTimeMetrics()
 }
 
-// updateRealTimeMetrics обновляет метрики в реальном времени
+// updateRealTimeMetrics updates metrics in real-time
 func updateRealTimeMetrics() {
 	lastWriteRequests := int64(0)
 	lastReadRequests := int64(0)
@@ -224,12 +224,12 @@ func updateRealTimeMetrics() {
 		elapsed := now.Sub(lastTime).Seconds()
 		lastTime = now
 
-		// Получаем текущие значения из Prometheus счетчиков
-		// Используем метрики из общего пакета, вместо прямого обращения к Prometheus
+		// Get current values from Prometheus counters
+		// Use metrics from the common package instead of direct Prometheus access
 		currentWriteRequests := writeRequestsCount
 		currentReadRequests := readRequestsCount
 
-		// Вычисляем RPS и QPS
+		// Calculate RPS and QPS
 		writeRequests := float64(currentWriteRequests - lastWriteRequests)
 		readRequests := float64(currentReadRequests - lastReadRequests)
 
@@ -237,20 +237,20 @@ func updateRealTimeMetrics() {
 		qps := readRequests / elapsed
 		ops := (writeRequests + readRequests) / elapsed
 
-		// Обновляем метрики
+		// Update metrics
 		CurrentRPS.Set(rps)
 		CurrentQPS.Set(qps)
 		CurrentOPS.Set(ops)
 
-		// Запоминаем значения для следующего цикла
+		// Remember values for the next cycle
 		lastWriteRequests = currentWriteRequests
 		lastReadRequests = currentReadRequests
 	}
 }
 
-// StartMetricsServer запускает HTTP-сервер для Prometheus метрик
+// StartMetricsServer starts an HTTP server for Prometheus metrics
 func StartMetricsServer(port int) {
-	// Проверяем, не был ли уже запущен сервер метрик
+	// Check if the metrics server has already been started
 	if metricsServerStarted {
 		fmt.Println("Metrics server already started, skipping initialization")
 		return
@@ -265,13 +265,13 @@ func StartMetricsServer(port int) {
 		}
 	}()
 
-	// Устанавливаем флаг, что сервер метрик запущен
+	// Set the flag indicating that the metrics server has been started
 	metricsServerStarted = true
 }
 
-// InitGeneratorMetrics инициализирует метрики для генератора логов
+// InitGeneratorMetrics initializes metrics for the log generator
 func InitGeneratorMetrics(config *Config) {
-	// Устанавливаем начальное значение для размера пакета
+	// Set the initial value for the log batch size
 	if config.Generator.BulkSize > 0 {
 		BatchSizeGauge.Set(float64(config.Generator.BulkSize))
 	}

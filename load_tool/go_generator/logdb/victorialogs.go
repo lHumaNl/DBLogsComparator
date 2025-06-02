@@ -10,38 +10,38 @@ import (
 	"time"
 )
 
-// VictoriaLogsDB - реализация LogDB для VictoriaLogs
+// VictoriaLogsDB - implementation of LogDB for VictoriaLogs
 type VictoriaLogsDB struct {
 	*BaseLogDB
-	TimeField     string // Поле с временной меткой (для _time_field)
-	ExtraParams   string // Дополнительные параметры запроса
-	httpClient    *http.Client
+	TimeField   string // Field with timestamp (for _time_field)
+	ExtraParams string // Additional query parameters
+	httpClient  *http.Client
 }
 
-// NewVictoriaLogsDB создает новый экземпляр VictoriaLogsDB
+// NewVictoriaLogsDB creates a new instance of VictoriaLogsDB
 func NewVictoriaLogsDB(baseURL string, options Options) (*VictoriaLogsDB, error) {
-	// Проверяем и добавляем путь /insert/jsonline к URL, если его еще нет
+	// Check and add the path /insert/jsonline to the URL if it's not already there
 	if !strings.Contains(baseURL, "/insert/jsonline") {
 		baseURL = strings.TrimRight(baseURL, "/") + "/insert/jsonline"
 	}
-	
-	// Добавляем необходимые параметры для корректной индексации логов
+
+	// Add necessary parameters for correct log indexing
 	if !strings.Contains(baseURL, "?") {
 		baseURL += "?"
 	} else {
 		baseURL += "&"
 	}
-	// Указываем все необходимые параметры для правильной индексации
+	// Specify all necessary parameters for correct log indexing
 	baseURL += "_time_field=timestamp&_msg_field=message&_stream_fields=log_type,service,host"
-	
+
 	base := NewBaseLogDB(baseURL, options)
-	
+
 	db := &VictoriaLogsDB{
 		BaseLogDB: base,
-		TimeField: "timestamp", // Значение по умолчанию
+		TimeField: "timestamp", // Default value
 	}
-	
-	// Создание HTTP-клиента
+
+	// Create HTTP client
 	db.httpClient = &http.Client{
 		Timeout: db.Timeout,
 		Transport: &http.Transport{
@@ -50,8 +50,8 @@ func NewVictoriaLogsDB(baseURL string, options Options) (*VictoriaLogsDB, error)
 			IdleConnTimeout:     90 * time.Second,
 		},
 	}
-	
-	// Добавление параметра _time_field, если он еще не добавлен
+
+	// Add _time_field parameter if it's not already added
 	if db.TimeField != "" && !strings.Contains(db.URL, "_time_field=") {
 		if strings.Contains(db.URL, "?") {
 			db.URL += fmt.Sprintf("&_time_field=%s", db.TimeField)
@@ -59,130 +59,130 @@ func NewVictoriaLogsDB(baseURL string, options Options) (*VictoriaLogsDB, error)
 			db.URL += fmt.Sprintf("?_time_field=%s", db.TimeField)
 		}
 	}
-	
+
 	return db, nil
 }
 
-// Initialize инициализирует соединение с VictoriaLogs
+// Initialize initializes the connection to VictoriaLogs
 func (db *VictoriaLogsDB) Initialize() error {
-	// Для VictoriaLogs не требуется дополнительная инициализация
+	// No additional initialization is required for VictoriaLogs
 	return nil
 }
 
-// Close закрывает соединение с VictoriaLogs
+// Close closes the connection to VictoriaLogs
 func (db *VictoriaLogsDB) Close() error {
-	// Для HTTP-клиента не требуется явное закрытие
+	// No explicit closing is required for the HTTP client
 	return nil
 }
 
-// Name возвращает имя базы данных
+// Name returns the name of the database
 func (db *VictoriaLogsDB) Name() string {
 	return "VictoriaLogs"
 }
 
-// FormatPayload форматирует записи логов в NDJSON формат для VictoriaLogs
+// FormatPayload formats log entries in NDJSON format for VictoriaLogs
 func (db *VictoriaLogsDB) FormatPayload(logs []LogEntry) (string, string) {
 	var buf bytes.Buffer
-	
-	// Для VictoriaLogs каждый лог должен быть на отдельной строке (NDJSON)
+
+	// For VictoriaLogs, each log should be on a separate line (NDJSON)
 	for i, log := range logs {
-		// Убедимся, что timestamp в правильном формате ISO8601
+		// Ensure timestamp is in the correct ISO8601 format
 		if _, ok := log["timestamp"]; !ok {
 			log["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
 		} else if ts, ok := log["timestamp"].(string); ok {
-			// Преобразуем timestamp в правильный формат, если нужно
+			// Convert timestamp to the correct format if necessary
 			if ts == "0" || ts == "" {
 				log["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
 			}
 		}
-		
-		// Убедимся, что message существует
+
+		// Ensure message exists
 		if _, ok := log["message"]; !ok {
 			log["message"] = fmt.Sprintf("Log message for %s", log["log_type"])
 		}
-		
+
 		logJSON, err := json.Marshal(log)
 		if err != nil {
 			continue
 		}
-		
+
 		buf.Write(logJSON)
 		if i < len(logs)-1 {
 			buf.WriteString("\n")
 		}
 	}
-	
-	// Для VictoriaLogs используем content-type application/stream+json
+
+	// For VictoriaLogs, use content-type application/stream+json
 	return buf.String(), "application/stream+json"
 }
 
-// SendLogs отправляет пакет логов в VictoriaLogs
+// SendLogs sends a batch of logs to VictoriaLogs
 func (db *VictoriaLogsDB) SendLogs(logs []LogEntry) error {
 	if len(logs) == 0 {
 		return nil
 	}
-	
+
 	payload, contentType := db.FormatPayload(logs)
-	
+
 	var lastErr error
-	
-	// Попытки отправки с повторами при ошибках
+
+	// Attempt to send with retries on errors
 	for attempt := 0; attempt <= db.RetryCount; attempt++ {
 		if attempt > 0 {
-			// Экспоненциальная задержка перед повторной попыткой
+			// Exponential backoff before retrying
 			backoff := db.RetryDelay * time.Duration(1<<uint(attempt-1))
 			if db.Verbose {
-				fmt.Printf("VictoriaLogs: Повторная попытка %d/%d после ошибки: %v (задержка: %v)\n", 
+				fmt.Printf("VictoriaLogs: Retrying %d/%d after error: %v (backoff: %v)\n",
 					attempt, db.RetryCount, lastErr, backoff)
 			}
 			time.Sleep(backoff)
 		}
-		
-		// Создание запроса
+
+		// Create request
 		req, err := http.NewRequest("POST", db.URL, strings.NewReader(payload))
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		
+
 		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("Accept", "application/json")
-		
-		// Отправка запроса
+
+		// Send request
 		requestStart := time.Now()
 		resp, err := db.httpClient.Do(req)
 		requestEnd := time.Now()
-		
-		// Обновление метрик
+
+		// Update metrics
 		db.MetricsData["request_duration"] = requestEnd.Sub(requestStart).Seconds()
-		
+
 		if err != nil {
 			lastErr = err
 			db.MetricsData["failed_requests"]++
 			continue
 		}
-		
+
 		defer resp.Body.Close()
-		
-		// Проверка статуса ответа
+
+		// Check response status
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			// Успешная отправка
+			// Successful send
 			db.MetricsData["successful_requests"]++
 			db.MetricsData["total_logs"] += float64(len(logs))
 			return nil
 		}
-		
-		// Чтение тела ответа для получения информации об ошибке
+
+		// Read response body to get error information
 		body, _ := io.ReadAll(resp.Body)
 		lastErr = fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, body)
 		db.MetricsData["failed_requests"]++
-		
-		// Если это серверная ошибка (5xx), повторяем попытку
-		// Для клиентских ошибок (4xx) нет смысла повторять
+
+		// If it's a server error (5xx), retry
+		// For client errors (4xx), there's no point in retrying
 		if resp.StatusCode < 500 {
 			return lastErr
 		}
 	}
-	
+
 	return lastErr
 }

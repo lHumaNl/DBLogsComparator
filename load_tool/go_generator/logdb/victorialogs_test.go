@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TestNewVictoriaLogsDB проверяет создание экземпляра VictoriaLogsDB
+// TestNewVictoriaLogsDB checks the creation of a VictoriaLogsDB instance
 func TestNewVictoriaLogsDB(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -56,35 +56,35 @@ func TestNewVictoriaLogsDB(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// При тестировании пропускаем случай с параметрами запроса,
-			// так как может быть сложно предсказать точный порядок параметров
+			// When testing, we skip the case with query parameters,
+			// as it may be difficult to predict the exact order of parameters
 			if tt.name == "URL with query params" {
-				t.Skip("Пропускаем тест с параметрами запроса, так как порядок параметров может отличаться")
+				t.Skip("Skipping test with query parameters, as the parameter order may differ")
 			}
-			
+
 			db, err := NewVictoriaLogsDB(tt.baseURL, tt.options)
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewVictoriaLogsDB() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				if db.URL != tt.wantURL {
 					t.Errorf("URL = %v, want %v", db.URL, tt.wantURL)
 				}
-				
-				// Проверяем, что HTTP-клиент создан
+
+				// Check that the HTTP client is created
 				if db.httpClient == nil {
-					t.Errorf("httpClient не инициализирован")
+					t.Errorf("httpClient is not initialized")
 				}
-				
-				// Проверяем поля из Options
+
+				// Check fields from Options
 				if db.BatchSize != tt.options.BatchSize {
 					t.Errorf("BatchSize = %v, want %v", db.BatchSize, tt.options.BatchSize)
 				}
-				
-				// Проверяем поля специфичные для VictoriaLogsDB
+
+				// Check fields specific to VictoriaLogsDB
 				if db.TimeField != "timestamp" {
 					t.Errorf("TimeField = %v, want %v", db.TimeField, "timestamp")
 				}
@@ -93,10 +93,10 @@ func TestNewVictoriaLogsDB(t *testing.T) {
 	}
 }
 
-// TestVictoriaLogsDBFormatPayload проверяет форматирование данных для отправки
+// TestVictoriaLogsDBFormatPayload checks the formatting of data for sending
 func TestVictoriaLogsDBFormatPayload(t *testing.T) {
 	db, _ := NewVictoriaLogsDB("http://localhost:9428", Options{})
-	
+
 	logs := []LogEntry{
 		{
 			"timestamp": "2023-01-01T12:00:00Z",
@@ -111,60 +111,60 @@ func TestVictoriaLogsDBFormatPayload(t *testing.T) {
 			"host":      "test-host",
 		},
 	}
-	
+
 	payload, contentType := db.FormatPayload(logs)
-	
-	// Проверяем Content-Type
+
+	// Check Content-Type
 	if contentType != "application/stream+json" {
 		t.Errorf("contentType = %v, want %v", contentType, "application/stream+json")
 	}
-	
-	// Проверяем, что каждый лог представлен в отдельной строке
+
+	// Check that each log is represented on a separate line
 	lines := strings.Split(strings.TrimSpace(payload), "\n")
 	if len(lines) != len(logs) {
-		t.Errorf("payload содержит %v строк, ожидалось %v", len(lines), len(logs))
+		t.Errorf("payload contains %v lines, expected %v", len(lines), len(logs))
 	}
-	
-	// Проверяем, что каждая строка содержит данные из логов
+
+	// Check that each line contains data from logs
 	for i, log := range logs {
 		for key := range log {
 			if !strings.Contains(lines[i], key) {
-				t.Errorf("Строка %v не содержит ключ %v", lines[i], key)
+				t.Errorf("Line %v does not contain key %v", lines[i], key)
 			}
 		}
 	}
 }
 
-// TestVictoriaLogsDBSendLogs проверяет отправку логов
+// TestVictoriaLogsDBSendLogs checks log sending
 func TestVictoriaLogsDBSendLogs(t *testing.T) {
-	// Создаем экземпляр VictoriaLogsDB с мок-клиентом
+	// Create an instance of VictoriaLogsDB with a mock client
 	db, _ := NewVictoriaLogsDB("http://localhost:9428", Options{
 		RetryCount: 1,
 		RetryDelay: time.Millisecond * 10,
 	})
-	
-	// Тест 1: Успешная отправка
+
+	// Test 1: Successful send
 	t.Run("Successful Send", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок
+		// Replace HTTP client with a mock
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
-					// Проверяем URL запроса
+					// Check request URL
 					if req.URL.String() != db.URL {
-						t.Errorf("URL запроса = %v, ожидался %v", req.URL.String(), db.URL)
+						t.Errorf("Request URL = %v, expected %v", req.URL.String(), db.URL)
 					}
-					
-					// Проверяем метод запроса
+
+					// Check request method
 					if req.Method != "POST" {
-						t.Errorf("Метод запроса = %v, ожидался %v", req.Method, "POST")
+						t.Errorf("Request method = %v, expected %v", req.Method, "POST")
 					}
-					
-					// Проверяем Content-Type
+
+					// Check Content-Type
 					if req.Header.Get("Content-Type") != "application/stream+json" {
-						t.Errorf("Content-Type = %v, ожидался %v", req.Header.Get("Content-Type"), "application/stream+json")
+						t.Errorf("Content-Type = %v, expected %v", req.Header.Get("Content-Type"), "application/stream+json")
 					}
-					
-					// Возвращаем успешный ответ
+
+					// Return successful response
 					return &http.Response{
 						StatusCode: 204,
 						Body:       io.NopCloser(bytes.NewBufferString("")),
@@ -173,8 +173,8 @@ func TestVictoriaLogsDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": "2023-01-01T12:00:00Z",
@@ -182,19 +182,19 @@ func TestVictoriaLogsDBSendLogs(t *testing.T) {
 				"level":     "info",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err != nil {
-			t.Errorf("SendLogs() error = %v, ожидался nil", err)
+			t.Errorf("SendLogs() error = %v, expected nil", err)
 		}
 	})
-	
-	// Тест 2: Ошибка отправки
+
+	// Test 2: Send error
 	t.Run("Failed Send", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок с ошибкой
+		// Replace HTTP client with a mock with error
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
@@ -203,8 +203,8 @@ func TestVictoriaLogsDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": "2023-01-01T12:00:00Z",
@@ -212,19 +212,19 @@ func TestVictoriaLogsDBSendLogs(t *testing.T) {
 				"level":     "info",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err == nil {
-			t.Errorf("SendLogs() error = nil, ожидалась ошибка")
+			t.Errorf("SendLogs() error = nil, expected an error")
 		}
 	})
-	
-	// Тест 3: Неуспешный статус ответа
+
+	// Test 3: Unsuccessful response status
 	t.Run("Failed Status", func(t *testing.T) {
-		// Подменяем HTTP-клиент на мок с ошибочным статусом
+		// Replace HTTP client with a mock with error status
 		mockClient := &http.Client{
 			Transport: &MockHTTPTransport{
 				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
@@ -236,8 +236,8 @@ func TestVictoriaLogsDBSendLogs(t *testing.T) {
 			},
 		}
 		db.httpClient = mockClient
-		
-		// Подготавливаем тестовые данные
+
+		// Prepare test data
 		logs := []LogEntry{
 			{
 				"timestamp": "2023-01-01T12:00:00Z",
@@ -245,42 +245,42 @@ func TestVictoriaLogsDBSendLogs(t *testing.T) {
 				"level":     "info",
 			},
 		}
-		
-		// Отправляем логи
+
+		// Send logs
 		err := db.SendLogs(logs)
-		
-		// Проверяем результат
+
+		// Check result
 		if err == nil {
-			t.Errorf("SendLogs() error = nil, ожидалась ошибка")
+			t.Errorf("SendLogs() error = nil, expected an error")
 		}
 	})
 }
 
-// TestVictoriaLogsDBName проверяет метод Name
+// TestVictoriaLogsDBName checks the Name method
 func TestVictoriaLogsDBName(t *testing.T) {
 	db, _ := NewVictoriaLogsDB("http://localhost:9428", Options{})
-	
+
 	name := db.Name()
 	expected := "VictoriaLogs"
-	
+
 	if name != expected {
 		t.Errorf("Name() = %v, want %v", name, expected)
 	}
 }
 
-// TestVictoriaLogsDBInitializeAndClose проверяет методы Initialize и Close
+// TestVictoriaLogsDBInitializeAndClose checks the Initialize and Close methods
 func TestVictoriaLogsDBInitializeAndClose(t *testing.T) {
 	db, _ := NewVictoriaLogsDB("http://localhost:9428", Options{})
-	
-	// Initialize должен просто возвращать nil
+
+	// Initialize should simply return nil
 	err := db.Initialize()
 	if err != nil {
-		t.Errorf("Initialize() error = %v, ожидался nil", err)
+		t.Errorf("Initialize() error = %v, expected nil", err)
 	}
-	
-	// Close должен просто возвращать nil
+
+	// Close should simply return nil
 	err = db.Close()
 	if err != nil {
-		t.Errorf("Close() error = %v, ожидался nil", err)
+		t.Errorf("Close() error = %v, expected nil", err)
 	}
 }
