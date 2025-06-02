@@ -97,7 +97,33 @@ func (db *ElasticsearchDB) createIndexWithMapping() error {
 				"event_type": { "type": "keyword" },
 				"status": { "type": "keyword" },
 				"request_method": { "type": "keyword" },
-				"error_code": { "type": "keyword" }
+				"error_code": { "type": "keyword" },
+				
+				"environment": { "type": "keyword" },
+				"datacenter": { "type": "keyword" },
+				"version": { "type": "keyword" },
+				"git_commit": { "type": "keyword" },
+				
+				"request_id": { "type": "keyword" },
+				"request_path": { 
+					"type": "text",
+					"fields": {
+						"keyword": { "type": "keyword", "ignore_above": 256 }
+					}
+				},
+				"client_ip": { "type": "ip" },
+				"duration": { "type": "float" },
+				"retry_count": { "type": "integer" },
+				"tags": { "type": "keyword" },
+				"context": { "type": "object" },
+				
+				"exception": { "type": "keyword" },
+				"stacktrace": { "type": "text" },
+				"user_id": { "type": "keyword" },
+				"session_id": { "type": "keyword" },
+				"dependencies": { "type": "keyword" },
+				"memory": { "type": "float" },
+				"cpu": { "type": "float" }
 			}
 		}
 	}`
