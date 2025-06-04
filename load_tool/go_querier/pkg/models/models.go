@@ -13,6 +13,9 @@ const (
 	ComplexQuery    QueryType = "complex"    // Complex search with multiple conditions
 	AnalyticalQuery QueryType = "analytical" // Query with aggregations
 	TimeSeriesQuery QueryType = "timeseries" // Time series query
+	// Additional query types
+	StatQuery QueryType = "stat" // Statistical (single-value) aggregation query
+	TopKQuery QueryType = "topk" // Top-K aggregation query
 )
 
 // QueryResult represents the result of a query execution

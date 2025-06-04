@@ -109,9 +109,15 @@ func main() {
 	if *system != "" {
 		// Check that a valid system is specified
 		switch *system {
-		case systemLoki, systemES, systemVictoria:
+		case systemLoki:
 			config.System = *system
 			fmt.Printf("Using logging system: %s\n", *system)
+		case systemES, "es", "elk":
+			config.System = systemES
+			fmt.Printf("Using logging system: %s\n", systemES)
+		case systemVictoria, "victorialogs":
+			config.System = systemVictoria
+			fmt.Printf("Using logging system: %s\n", systemVictoria)
 		default:
 			log.Fatalf("Unknown logging system: %s", *system)
 		}
@@ -393,17 +399,22 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 
 // runQuerierWithConfig starts the query client with new configuration from YAML
 func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
+	fmt.Printf("Debug: runQuerierWithConfig called with config.System=%s\n", config.System)
 	log.Printf("Starting query client for system %s\n", config.System)
 
 	// Determine URL for selected system
 	var baseURL string
+	var systemForExecutor string
 	switch config.System {
 	case "victorialogs", "victoria":
 		baseURL = config.Querier.URLVictoria
-	case "elasticsearch", "es":
+		systemForExecutor = "victoria"
+	case "elasticsearch", "es", "elk":
 		baseURL = config.Querier.URLES
+		systemForExecutor = "es"
 	case "loki":
 		baseURL = config.Querier.URLLoki
+		systemForExecutor = "loki"
 	default:
 		return fmt.Errorf("unknown logging system: %s", config.System)
 	}
@@ -417,7 +428,8 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 	}
 
 	// Create query executor for selected system
-	executor, err := go_querier.CreateQueryExecutor(config.System, baseURL, options)
+	log.Printf("Debug: Creating query executor with system=%s, baseURL=%s", systemForExecutor, baseURL)
+	executor, err := go_querier.CreateQueryExecutor(systemForExecutor, baseURL, options)
 	if err != nil {
 		return fmt.Errorf("error creating query executor: %v", err)
 	}

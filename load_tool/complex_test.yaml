@@ -1,0 +1,18 @@
+durationSeconds: 30
+metrics: true
+
+querier:
+  rps: 2
+  maxRetries: 3
+  retryDelayMs: 500
+
+  workerCount: 2
+  verbose: true
+
+  # Только комплексные и аналитические запросы
+  distribution:
+    exact_match: 0
+    time_range: 0
+    label_filter: 0
+    complex_query: 50
+    analytical_query: 50

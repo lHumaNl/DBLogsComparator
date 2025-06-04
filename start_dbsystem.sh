@@ -20,7 +20,7 @@ show_help() {
     echo "  --native        - Start the log generator natively (without Docker)"
     echo "  --no-monitoring - Don't start or check monitoring system (ignored with 'monitoring' log system)"
     echo "  --down          - Stop the specified log system and its containers"
-    echo "  --stop-generator - Stop only the log generator (doesn't affect other systems)"
+    echo "  --stop-load - Stop only the log load tool (doesn't affect other systems)"
     echo "  --help          - Show this help"
     echo ""
     echo "Examples:"
@@ -291,7 +291,7 @@ start_generator() {
     
     # Convert DB_SYSTEM to what load_tool expects
     case $DB_SYSTEM in
-        elk )           SYSTEM_ARG="elasticsearch"
+        elk )           SYSTEM_ARG="es"
                         ;;
         loki )          SYSTEM_ARG="loki"
                         ;;
@@ -378,7 +378,7 @@ start_querier() {
     
     # Convert DB_SYSTEM to what load_tool expects
     case $DB_SYSTEM in
-        elk )           SYSTEM_ARG="elasticsearch"
+        elk )           SYSTEM_ARG="es"
                         ;;
         loki )          SYSTEM_ARG="loki"
                         ;;
@@ -439,7 +439,9 @@ start_querier() {
         # Pass the selected logging system and mode through variables
         # Add --build flag for automatic image rebuild when changes occur
         echo "Starting log querier with updated image..."
-        SYSTEM=$SYSTEM_ARG MODE="querier" docker-compose up -d --build
+        export SYSTEM=$SYSTEM_ARG
+        export MODE="querier"
+        docker-compose up -d --build
         echo "Log Querier started with Docker"
         cd - > /dev/null
     fi
@@ -465,7 +467,7 @@ start_combined() {
     
     # Convert DB_SYSTEM to what load_tool expects
     case $DB_SYSTEM in
-        elk )           SYSTEM_ARG="elasticsearch"
+        elk )           SYSTEM_ARG="es"
                         ;;
         loki )          SYSTEM_ARG="loki"
                         ;;
@@ -591,7 +593,7 @@ for arg in "$@"; do
                          ;;
         --down )        BRING_DOWN=true
                          ;;
-        --stop-generator ) STOP_GENERATOR=true
+        --stop-load ) STOP_GENERATOR=true
                          ;;
         --help )        show_help
                          ;;
@@ -605,14 +607,14 @@ for arg in "$@"; do
     esac
 done
 
-# If --stop-generator flag is set, stop the generator and exit regardless of other arguments
+# If --stop-load flag is set, stop the generator and exit regardless of other arguments
 if $STOP_GENERATOR; then
     stop_generator
     echo "Log generator stopped!"
     exit 0
 fi
 
-# Check if DB_SYSTEM is specified (unless --stop-generator is used)
+# Check if DB_SYSTEM is specified (unless --stop-load is used)
 if [ -z "$DB_SYSTEM" ]; then
     echo "Error: You must specify a log system."
     show_help

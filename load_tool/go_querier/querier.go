@@ -3,14 +3,20 @@ package go_querier
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"math/rand"
+	"os"
+	"os/signal"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/executors"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
+	"github.com/sirupsen/logrus"
 )
 
 // QueryType defines the type of query
@@ -90,12 +96,16 @@ type Worker struct {
 
 // CreateQueryExecutor creates a query executor for the specified system
 func CreateQueryExecutor(mode, baseURL string, options models.Options) (models.QueryExecutor, error) {
+	fmt.Printf("Debug: CreateQueryExecutor called with mode=%s, baseURL=%s\n", mode, baseURL)
 	switch mode {
-	case "victoria":
+	case "victoria", "victorialogs":
+		fmt.Println("Debug: Creating VictoriaLogs executor")
 		return executors.NewVictoriaLogsExecutor(baseURL, options), nil
-	case "es":
+	case "es", "elasticsearch", "elk":
+		fmt.Println("Debug: Creating Elasticsearch executor")
 		return executors.NewElasticsearchExecutor(baseURL, options), nil
 	case "loki":
+		fmt.Println("Debug: Creating Loki executor")
 		return executors.NewLokiExecutor(baseURL, options), nil
 	default:
 		return nil, errors.New(fmt.Sprintf("unknown logging system: %s", mode))
@@ -270,4 +280,160 @@ func randInt(min, max int) int {
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
+}
+
+// createExecutor creates a new query executor for the specified system
+func createExecutor(system, host string, port int, timeout time.Duration, retryCount int, verbose bool) (models.QueryExecutor, error) {
+	baseURL := fmt.Sprintf("http://%s:%d", host, port)
+
+	options := models.Options{
+		Timeout:    timeout,
+		RetryCount: retryCount,
+		RetryDelay: 500 * time.Millisecond,
+		Verbose:    verbose,
+	}
+
+	switch strings.ToLower(system) {
+	case "elasticsearch", "elk":
+		return executors.NewElasticsearchExecutor(baseURL, options), nil
+	case "loki":
+		return executors.NewLokiExecutor(baseURL, options), nil
+	case "victorialogs", "victoria":
+		return executors.NewVictoriaLogsExecutor(baseURL, options), nil
+	default:
+		return nil, errors.New("unsupported log system")
+	}
+}
+
+func main() {
+	// Parse command-line flags
+	serverHost := flag.String("host", "localhost", "Server host")
+	serverPort := flag.Int("port", 9200, "Server port")
+	system := flag.String("system", "elasticsearch", "Log system to query (elasticsearch, loki, victorialogs, etc)")
+	workersCount := flag.Int("workers", 2, "Number of query workers")
+	intervalMillis := flag.Int("interval", 1000, "Query interval in milliseconds")
+	rps := flag.Int("rps", 0, "Requests per second (overrides interval if set)")
+	timeoutMs := flag.Int("timeout", 5000, "Query timeout in milliseconds")
+	retryCount := flag.Int("retries", 3, "Query retry count")
+	verbose := flag.Bool("verbose", false, "Verbose output")
+	queryType := flag.String("query-type", "", "Query type to use (simple, complex, analytical, timeseries, stat, topk). If empty, use all types.")
+
+	flag.Parse()
+
+	// Configure logger
+	log := logrus.New()
+	log.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
+
+	if *verbose {
+		log.SetLevel(logrus.DebugLevel)
+	} else {
+		log.SetLevel(logrus.InfoLevel)
+	}
+
+	// Create the executor
+	executor, err := createExecutor(*system, *serverHost, *serverPort, time.Duration(*timeoutMs)*time.Millisecond, *retryCount, *verbose)
+	if err != nil {
+		log.Fatalf("Failed to create executor: %v", err)
+	}
+
+	// Calculate query interval
+	var interval time.Duration
+	if *rps > 0 {
+		interval = time.Second / time.Duration(*rps)
+	} else {
+		interval = time.Duration(*intervalMillis) * time.Millisecond
+	}
+
+	// Parse query type if specified
+	var selectedQueryType models.QueryType
+	if *queryType != "" {
+		switch strings.ToLower(*queryType) {
+		case "simple":
+			selectedQueryType = models.SimpleQuery
+		case "complex":
+			selectedQueryType = models.ComplexQuery
+		case "analytical":
+			selectedQueryType = models.AnalyticalQuery
+		case "timeseries":
+			selectedQueryType = models.TimeSeriesQuery
+		case "stat":
+			selectedQueryType = models.StatQuery
+		case "topk":
+			selectedQueryType = models.TopKQuery
+		default:
+			log.Fatalf("Invalid query type: %s. Must be simple, complex, analytical, timeseries, stat, or topk", *queryType)
+		}
+		log.Infof("Using specified query type: %s", *queryType)
+	}
+
+	// Create workers
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start workers
+	for i := 1; i <= *workersCount; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			log.Infof("Starting worker %d", workerID)
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					log.Infof("Worker %d stopping", workerID)
+					return
+				case <-ticker.C:
+					// Determine query type
+					var qt models.QueryType
+					if *queryType != "" {
+						qt = selectedQueryType
+					} else {
+						// Randomly choose query type if not specified
+						rnd := int(time.Now().UnixNano() % 100)
+						switch {
+						case rnd < 50:
+							qt = models.SimpleQuery // 50%
+						case rnd < 65:
+							qt = models.ComplexQuery // 15%
+						case rnd < 80:
+							qt = models.AnalyticalQuery // 15%
+						case rnd < 90:
+							qt = models.TimeSeriesQuery // 10%
+						case rnd < 95:
+							qt = models.StatQuery // 5%
+						default:
+							qt = models.TopKQuery // 5%
+						}
+					}
+
+					// Execute the query
+					queryStartTime := time.Now()
+					result, err := executor.ExecuteQuery(ctx, qt)
+					queryDuration := time.Since(queryStartTime)
+
+					if err != nil {
+						log.Errorf("[Worker %d] Query failed: %v", workerID, err)
+					} else {
+						log.Infof("[Worker %d] Query %s: found %d records, read %d bytes, time %v",
+							workerID, qt, result.HitCount, result.BytesRead, queryDuration)
+					}
+				}
+			}
+		}(i)
+	}
+
+	// Handle signals for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	<-sigCh
+	log.Info("Stopping querier...")
+	cancel()
+	wg.Wait()
+	log.Info("Querier stopped")
 }
