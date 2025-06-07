@@ -446,6 +446,8 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 			models.ComplexQuery:    config.Querier.Distribution["complex"],
 			models.AnalyticalQuery: config.Querier.Distribution["analytical"],
 			models.TimeSeriesQuery: config.Querier.Distribution["timeseries"],
+			models.StatQuery:       config.Querier.Distribution["stat"],
+			models.TopKQuery:       config.Querier.Distribution["topk"],
 		},
 		QueryTimeout: 10 * time.Second, // Default 10 seconds
 		MaxRetries:   config.Querier.MaxRetries,

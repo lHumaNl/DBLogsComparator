@@ -26,6 +26,12 @@ type QueryResult struct {
 	BytesRead   int64         // Number of bytes read
 	Status      string        // Query status
 	RawResponse []byte        // Raw response data
+
+	// Query details
+	QueryString string    // The actual query string sent to the database
+	StartTime   time.Time // Query start time range
+	EndTime     time.Time // Query end time range
+	Limit       string    // Query result limit
 }
 
 // QueryExecutor interface for executing queries

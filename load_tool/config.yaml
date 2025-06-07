@@ -27,7 +27,9 @@ querier:
   verbose: true
 
   distribution:
-    exact_match: 30
-    time_range: 40
-    label_filter: 20
-    complex_query: 10
+    simple: 20
+    complex: 20
+    analytical: 15
+    timeseries: 15
+    stat: 15
+    topk: 15

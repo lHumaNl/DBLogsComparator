@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
@@ -25,13 +27,12 @@ type LokiExecutor struct {
 	// Cache for label values
 	labelCache     map[string][]string
 	labelCacheLock sync.RWMutex
-	labelCacheTime map[string]time.Time
 
-	// Available labels in the system
-	availableLabels   []string
-	hasData           bool
-	systemChecked     bool
-	systemCheckedLock sync.RWMutex
+	// Available labels from common data
+	availableLabels []string
+
+	// Time range generator for realistic queries
+	timeRangeGenerator *common.TimeRangeGenerator
 }
 
 // NewLokiExecutor creates a new Loki executor
@@ -41,19 +42,24 @@ func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
 		Timeout: options.Timeout,
 	}
 
-	executor := &LokiExecutor{
-		BaseURL:         baseURL,
-		Options:         options,
-		Client:          client,
-		labelCache:      make(map[string][]string),
-		labelCacheTime:  make(map[string]time.Time),
-		availableLabels: make([]string, 0),
-		hasData:         false,
-		systemChecked:   false,
+	// Initialize with static labels from our common data package
+	availableLabels := logdata.CommonLabels
+
+	// Initialize label cache with static values
+	labelCache := make(map[string][]string)
+	labelValuesMap := logdata.GetLabelValuesMap()
+	for label, values := range labelValuesMap {
+		labelCache[label] = values
 	}
 
-	// Start async system check to discover labels and verify data presence
-	go executor.checkSystemData(context.Background())
+	executor := &LokiExecutor{
+		BaseURL:            baseURL,
+		Options:            options,
+		Client:             client,
+		labelCache:         labelCache,
+		availableLabels:    availableLabels,
+		timeRangeGenerator: common.NewTimeRangeGenerator(),
+	}
 
 	return executor
 }
@@ -63,457 +69,90 @@ func (e *LokiExecutor) GetSystemName() string {
 	return "loki"
 }
 
-// checkSystemData checks if the Loki system has data and what labels are available
-func (e *LokiExecutor) checkSystemData(ctx context.Context) {
-	if e.Options.Verbose {
-		log.Println("Debug: Starting Loki system check...")
-	}
-
-	// Get available labels
-	labels, err := e.getAvailableLabels(ctx)
-	if err != nil {
-		if e.Options.Verbose {
-			log.Printf("Debug: Error getting labels: %v", err)
-		}
-		// Set default values
-		e.systemCheckedLock.Lock()
-		e.availableLabels = []string{}
-		e.hasData = false
-		e.systemChecked = true
-		e.systemCheckedLock.Unlock()
-		return
-	}
-
-	// Store available labels
-	e.systemCheckedLock.Lock()
-	e.availableLabels = labels
-	e.systemCheckedLock.Unlock()
-
-	// Check if we have data by trying a simple query with each label
-	hasData := false
-	if len(labels) > 0 {
-		for _, label := range labels {
-			// Get values for this label
-			values, err := e.fetchLabelValues(ctx, label)
-			if err != nil || len(values) == 0 {
-				continue
-			}
-
-			// Try a simple query with this label and value
-			dataFound, err := e.executeSimpleTestQuery(ctx, label, values[0])
-			if err != nil {
-				if e.Options.Verbose {
-					log.Printf("Debug: Error executing test query: %v", err)
-				}
-				continue
-			}
-
-			if dataFound {
-				hasData = true
-				break
-			}
-		}
-	}
-
-	// If no specific label queries worked, try a generic query
-	if !hasData && len(labels) > 0 {
-		dataFound, err := e.executeSimpleTestQuery(ctx, "job", ".+")
-		if err == nil && dataFound {
-			hasData = true
-		}
-	}
-
-	// Update system status
-	e.systemCheckedLock.Lock()
-	e.hasData = hasData
-	e.systemChecked = true
-	e.systemCheckedLock.Unlock()
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Loki system check completed. Has data: %v, Available labels: %v", hasData, labels)
-	}
-
-	// Start refreshing the label cache
-	go e.refreshLabelCache(ctx)
-}
-
-// executeSimpleTestQuery executes a simple query to check if there's data in the system
-func (e *LokiExecutor) executeSimpleTestQuery(ctx context.Context, label string, value string) (bool, error) {
-	// Build a simple query to check for data
-	queryString := fmt.Sprintf("{%s=\"%s\"}", label, value)
-
-	// Create query parameters
-	now := time.Now()
-	startTime := now.Add(-24 * time.Hour)
-
-	params := url.Values{}
-	params.Add("query", queryString)
-	params.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
-	params.Add("end", fmt.Sprintf("%d", now.UnixNano()))
-	params.Add("limit", "1")
-
-	// Build the URL
-	queryURL := fmt.Sprintf("%s/loki/api/v1/query_range", e.BaseURL)
-
-	// Create a POST request with the parameters in the body
-	req, err := http.NewRequestWithContext(ctx, "POST", queryURL, strings.NewReader(params.Encode()))
-	if err != nil {
-		return false, fmt.Errorf("error creating request: %v", err)
-	}
-
-	// Set content type
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	// Execute the request
-	resp, err := e.Client.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("error executing request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// If we get a non-200 response, it might be a query syntax error
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Parse the response
-	var response struct {
-		Status string `json:"status"`
-		Data   struct {
-			ResultType string        `json:"resultType"`
-			Result     []interface{} `json:"result"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return false, fmt.Errorf("error decoding response: %v", err)
-	}
-
-	// Check if we have any results
-	hasData := len(response.Data.Result) > 0
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Test query %s returned data: %v", queryString, hasData)
-	}
-
-	return hasData, nil
-}
-
-// getAvailableLabels gets all available labels from Loki
-func (e *LokiExecutor) getAvailableLabels(ctx context.Context) ([]string, error) {
-	url := fmt.Sprintf("%s/loki/api/v1/labels", e.BaseURL)
-
-	// Create a POST request with empty body
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %v", err)
-	}
-
-	// Set content type
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := e.Client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var response struct {
-		Status string   `json:"status"`
-		Data   []string `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("error decoding response: %v", err)
-	}
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Found %d available labels in Loki: %v", len(response.Data), response.Data)
-	}
-
-	return response.Data, nil
-}
-
 // ExecuteQuery executes a query of the specified type in Loki
 func (e *LokiExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryType) (models.QueryResult, error) {
-	// Wait for system check to complete if it hasn't already
-	if !e.IsSystemChecked() {
-		if e.Options.Verbose {
-			log.Println("Debug: Waiting for system check to complete...")
-		}
-
-		// Wait for up to 5 seconds for system check to complete
-		for i := 0; i < 10; i++ {
-			if e.IsSystemChecked() {
-				break
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-
-		if !e.IsSystemChecked() && e.Options.Verbose {
-			log.Println("Debug: System check still not complete, proceeding anyway")
-		}
-	}
-
-	// Generate the query
+	// Generate a query of the specified type
 	queryInfo := e.GenerateRandomQuery(queryType).(map[string]string)
 
-	// For analytical queries, we need to modify the query parameter to use the correct format
-	if queryType == models.AnalyticalQuery {
-		// Check if the query is a valid analytical query
-		if !strings.Contains(queryInfo["query"], "count_over_time") &&
-			!strings.Contains(queryInfo["query"], "rate") &&
-			!strings.Contains(queryInfo["query"], "sum") &&
-			!strings.Contains(queryInfo["query"], "avg") {
-			// If not, replace with a valid analytical query
-			queryInfo["query"] = e.generateAnalyticalQuery(e.availableLabels)
-		}
-	}
-
-	// Check if we need to use a fallback query
-	e.systemCheckedLock.RLock()
-	hasData := e.hasData
-	hasLabels := len(e.availableLabels) > 0
-	e.systemCheckedLock.RUnlock()
-
-	if !hasData || !hasLabels {
-		if e.Options.Verbose {
-			log.Printf("Debug: Using fallback query: %s", e.generateFallbackQuery())
-		}
-		queryInfo["query"] = e.generateFallbackQuery()
-	}
-
-	// Execute the query
+	// Execute the query against Loki
 	return e.executeLokiQuery(queryInfo)
 }
 
-// generateFallbackQuery creates a query that should find any logs in the system
-func (e *LokiExecutor) generateFallbackQuery() string {
-	e.systemCheckedLock.RLock()
-	defer e.systemCheckedLock.RUnlock()
-
-	// If we have available labels, use the first one with values
-	if len(e.availableLabels) > 0 {
-		for _, label := range e.availableLabels {
-			values, err := e.GetLabelValues(context.Background(), label)
-			if err == nil && len(values) > 0 {
-				// Use the first value of this label
-				return fmt.Sprintf("{%s=~\"%s\"}", label, values[0])
-			}
-		}
-	}
-
-	// If no labels or values found, use a matcher that will work with empty Loki
-	// Use a pattern that matches any value but is not empty-compatible
-	return `{job=~".+"}`
-}
-
-// GetLabelValues retrieves label values from Loki API and caches them
+// GetLabelValues retrieves label values from static data or cache
 func (e *LokiExecutor) GetLabelValues(ctx context.Context, label string) ([]string, error) {
-	// Check if we have cached values that are still fresh (less than 5 minutes old)
+	// Check if we have this label in our cache
 	e.labelCacheLock.RLock()
-	if values, ok := e.labelCache[label]; ok && time.Since(e.labelCacheTime[label]) < 5*time.Minute {
-		e.labelCacheLock.RUnlock()
-		return values, nil
-	}
+	values, exists := e.labelCache[label]
 	e.labelCacheLock.RUnlock()
 
-	// Get fresh values from API
-	url := fmt.Sprintf("%s/loki/api/v1/label/%s/values", e.BaseURL, label)
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Fetching label values for %s from Loki API", label)
+	if exists {
+		return values, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %v", err)
-	}
+	// For any label we don't have in our static data, return some generic values
+	genericValues := []string{"value1", "value2", "value3", "value-" + fmt.Sprint(rand.Intn(100))}
 
-	client := &http.Client{
-		Timeout: e.Options.Timeout,
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP request failed with status %d: %s", resp.StatusCode, body)
-	}
-
-	var response struct {
-		Status string   `json:"status"`
-		Data   []string `json:"data"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %v", err)
-	}
-
-	// Update cache
+	// Cache these values for future use
 	e.labelCacheLock.Lock()
-	defer e.labelCacheLock.Unlock()
+	e.labelCache[label] = genericValues
+	e.labelCacheLock.Unlock()
 
-	e.labelCache[label] = response.Data
-	e.labelCacheTime[label] = time.Now()
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Found %d values for label %s", len(response.Data), label)
-	}
-
-	return response.Data, nil
-}
-
-// refreshLabelCache refreshes the label cache asynchronously
-func (e *LokiExecutor) refreshLabelCache(ctx context.Context) {
-	// Get all available labels
-	labels, err := e.getAvailableLabels(ctx)
-	if err != nil {
-		log.Printf("Error refreshing label cache: %v", err)
-		return
-	}
-
-	// Update available labels
-	e.systemCheckedLock.Lock()
-	e.availableLabels = labels
-	e.systemCheckedLock.Unlock()
-
-	// For each label, get its values
-	for _, label := range labels {
-		values, err := e.fetchLabelValues(ctx, label)
-		if err != nil {
-			if e.Options.Verbose {
-				log.Printf("Debug: Error fetching values for label %s: %v", label, err)
-			}
-			continue
-		}
-
-		// Update the cache
-		e.labelCacheLock.Lock()
-		e.labelCache[label] = values
-		e.labelCacheTime[label] = time.Now()
-		e.labelCacheLock.Unlock()
-
-		if e.Options.Verbose {
-			log.Printf("Debug: Refreshed cache for label %s with %d values", label, len(values))
-		}
-	}
-}
-
-// fetchLabelValues fetches values for a specific label directly from Loki API
-func (e *LokiExecutor) fetchLabelValues(ctx context.Context, label string) ([]string, error) {
-	// Build the URL for label values API endpoint
-	url := fmt.Sprintf("%s/loki/api/v1/label/%s/values", e.BaseURL, label)
-
-	// Create the request
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %v", err)
-	}
-
-	// Set content type
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	// Execute the request
-	resp, err := e.Client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Check if the response is successful
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Parse the response
-	var response struct {
-		Status string   `json:"status"`
-		Data   []string `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("error decoding response: %v", err)
-	}
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Found %d values for label %s: %v", len(response.Data), label, response.Data)
-	}
-
-	return response.Data, nil
+	return genericValues, nil
 }
 
 // GenerateRandomQuery creates a random query of the specified type for Loki
 func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	now := time.Now()
-	startTime := now.Add(-24 * time.Hour)
-	startTimeStr := fmt.Sprintf("%d", startTime.UnixNano())
-	endTimeStr := fmt.Sprintf("%d", now.UnixNano())
+	// Generate time range for the query
+	timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
+	startTimeStr := common.FormatTimeForLoki(timeRange.Start)
+	endTimeStr := common.FormatTimeForLoki(timeRange.End)
 
-	limit := "100"
-	step := "10s"
+	// Set reasonable limits for the query - make limit random
+	limits := []string{"50", "100", "200", "500", "1000"}
+	limit := limits[rand.Intn(len(limits))] // Random limit for log queries
+	step := "12s"                           // Default step for metric queries
 
-	var queryString string
-
-	// Get available labels and their values
-	e.systemCheckedLock.RLock()
-	availableLabels := e.availableLabels
-	hasData := e.hasData
-	e.systemCheckedLock.RUnlock()
-
-	// If we have no data or no labels, use a valid fallback query
-	if !hasData || len(availableLabels) == 0 {
-		// Use a pattern that matches any value but is not empty-compatible
-		return map[string]string{
-			"query": `{job=~".+"}`,
-			"start": startTimeStr,
-			"end":   endTimeStr,
-			"limit": limit,
-			"step":  step,
-		}
+	// Set shorter step for short time ranges
+	rangeDuration := timeRange.End.Sub(timeRange.Start)
+	if rangeDuration <= time.Minute*5 {
+		step = "5s"
+	} else if rangeDuration <= time.Minute*30 {
+		step = "30s"
+	} else if rangeDuration <= time.Hour {
+		step = "60s"
+	} else if rangeDuration <= time.Hour*3 {
+		step = "120s"
+	} else {
+		step = "180s"
 	}
+
+	// Generate the query string
+	var queryString string
 
 	switch queryType {
 	case models.SimpleQuery:
 		// Simple log search with one filter
-		queryString = e.generateSimpleQuery(availableLabels)
+		queryString = e.generateSimpleQuery(e.availableLabels)
 
 	case models.ComplexQuery:
 		// Complex query with multiple conditions
-		queryString = e.generateComplexQuery(availableLabels)
+		queryString = e.generateComplexQuery(e.availableLabels)
 
 	case models.AnalyticalQuery:
 		// Analytical queries with rate or count_over_time
-		queryString = e.generateAnalyticalQuery(availableLabels)
+		queryString = e.generateAnalyticalQuery()
 
 	case models.TimeSeriesQuery:
 		// Time-series query (rate over time bucket)
-		queryString = e.generateTimeSeriesQuery(availableLabels)
+		queryString = e.generateTimeSeriesQuery()
 
 	case models.StatQuery:
 		// Single statistical value (count/avg)
-		queryString = e.generateStatQuery(availableLabels)
+		queryString = e.generateStatQuery(e.availableLabels)
 
 	case models.TopKQuery:
 		// Top-K query by label value
-		queryString = e.generateTopKQuery(availableLabels)
-	}
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Generated Loki query: %s", queryString)
+		queryString = e.generateTopKQuery(e.availableLabels)
 	}
 
 	return map[string]string{
@@ -527,294 +166,425 @@ func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface
 
 // generateSimpleQuery creates a simple query using available labels
 func (e *LokiExecutor) generateSimpleQuery(availableLabels []string) string {
-	// If we have no available labels, return a valid fallback query
-	if len(availableLabels) == 0 {
-		return `{job=~".+"}`
-	}
-
 	// Choose a random label from available labels
-	chosenLabel := availableLabels[rand.Intn(len(availableLabels))]
+	var chosenLabel string
 
-	// Get values for this label
-	values, err := e.GetLabelValues(context.Background(), chosenLabel)
-	if err != nil || len(values) == 0 {
-		// If no values, use a valid fallback
-		return `{job=~".+"}`
+	// Try to use commonly populated labels first
+	commonLabels := []string{"log_type", "host", "container_name", "service", "level", "environment"}
+
+	// Check if any of the common labels are available
+	for _, label := range commonLabels {
+		if contains(availableLabels, label) {
+			chosenLabel = label
+			break
+		}
 	}
 
+	// If no common label found, choose any random label
+	if chosenLabel == "" {
+		chosenLabel = availableLabels[rand.Intn(len(availableLabels))]
+	}
+
+	// Use our static data to get values for this label
+	var selectedValues []string
 	// Choose 1-2 random values
 	count := rand.Intn(2) + 1
-	selectedValues := make([]string, 0, count)
-	for i := 0; i < count && i < len(values); i++ {
-		// Choose a random value that's not already selected
-		for {
-			value := values[rand.Intn(len(values))]
-			// Check if value is already selected
-			alreadySelected := false
-			for _, selected := range selectedValues {
-				if selected == value {
-					alreadySelected = true
-					break
-				}
-			}
-			if !alreadySelected {
-				selectedValues = append(selectedValues, value)
-				break
-			}
-			// If we've tried too many times, just use what we have
-			if len(selectedValues) > 0 && rand.Intn(5) == 0 {
-				break
-			}
-		}
-	}
+	selectedValues = logdata.GetMultipleRandomValuesForLabel(chosenLabel, count)
 
 	// Create the query string
+	var queryString string
 	if len(selectedValues) > 0 {
-		queryString := fmt.Sprintf("{%s=~\"%s\"}", chosenLabel, strings.Join(selectedValues, "|"))
-
-		// Add text filter for some queries
-		if rand.Intn(10) > 6 {
-			filters := []string{"error", "exception", "warning", "info", "debug"}
-			filter := filters[rand.Intn(len(filters))]
-			queryString = fmt.Sprintf(`%s |= "%s"`, queryString, filter)
+		// Most frequently used pattern - exact label match (more likely to return results)
+		if rand.Intn(10) < 8 {
+			if len(selectedValues) == 1 {
+				queryString = fmt.Sprintf("{%s=\"%s\"}", chosenLabel, selectedValues[0])
+			} else {
+				// Use regex for multiple values
+				queryString = fmt.Sprintf("{%s=~\"(%s)\"}", chosenLabel, strings.Join(selectedValues, "|"))
+			}
+		} else {
+			// Less frequently used - exclusion pattern
+			queryString = fmt.Sprintf("{%s!=\"%s\"}", chosenLabel, selectedValues[0])
 		}
 
-		return queryString
+		// Add text filter for some queries to make the query more realistic
+		if rand.Intn(10) > 5 {
+			// Common keywords that users might search for
+			keywords := []string{
+				"error", "warning", "failed", "exception", "timeout",
+				"success", "completed", "started", "authenticated", "authorized",
+				"INFO", "WARN", "ERROR", "FATAL", "DEBUG",
+				"GET", "POST", "PUT", "DELETE", "PATCH",
+			}
+			keyword := keywords[rand.Intn(len(keywords))]
+
+			// Randomly choose between case-sensitive or insensitive search
+			if rand.Intn(2) == 0 {
+				queryString = fmt.Sprintf("%s |= \"%s\"", queryString, keyword)
+			} else {
+				queryString = fmt.Sprintf("%s |~ \"(?i)%s\"", queryString, keyword)
+			}
+		}
 	}
 
-	// Fallback to valid query
-	return `{job=~".+"}`
+	return queryString
 }
 
 // generateComplexQuery creates a complex query with multiple conditions
 func (e *LokiExecutor) generateComplexQuery(availableLabels []string) string {
-	// If we have no available labels, return a valid fallback query
-	if len(availableLabels) == 0 {
-		return `{job=~".+"}`
-	}
+	// Choose 2-4 random labels from available labels
+	labelCount := rand.Intn(3) + 2
+	chosenLabels := logdata.GetRandomLabels(labelCount)
 
-	// Choose 1-3 random labels from available labels
-	labelCount := rand.Intn(3) + 1
-	chosenLabels := make([]string, 0, labelCount)
+	// For each chosen label, create a filter expression
+	labelExpressions := make([]string, 0, len(chosenLabels))
 
-	// Select random labels
-	for i := 0; i < labelCount && i < len(availableLabels); i++ {
-		// Choose a random label that's not already selected
-		for {
-			label := availableLabels[rand.Intn(len(availableLabels))]
-			// Check if label is already selected
-			alreadySelected := false
-			for _, selected := range chosenLabels {
-				if selected == label {
-					alreadySelected = true
-					break
-				}
-			}
-			if !alreadySelected {
-				chosenLabels = append(chosenLabels, label)
-				break
-			}
-			// If we've tried too many times, just use what we have
-			if len(chosenLabels) > 0 && rand.Intn(5) == 0 {
-				break
-			}
-		}
-	}
-
-	// Build conditions for each chosen label
-	var conditions []string
 	for _, label := range chosenLabels {
-		values, err := e.GetLabelValues(context.Background(), label)
-		if err != nil || len(values) == 0 {
-			continue
+		// Generate a filter expression for this label
+		// Use regex for 30% of label filters, exact match for 70%
+		useRegex := rand.Intn(10) < 3
+		valueCount := 1
+		if useRegex {
+			valueCount = rand.Intn(3) + 1 // 1-3 values for regex
 		}
 
-		// Choose 1-2 random values
-		count := rand.Intn(2) + 1
-		selectedValues := make([]string, 0, count)
-		for i := 0; i < count && i < len(values); i++ {
-			// Choose a random value that's not already selected
-			for {
-				value := values[rand.Intn(len(values))]
-				// Check if value is already selected
-				alreadySelected := false
-				for _, selected := range selectedValues {
-					if selected == value {
-						alreadySelected = true
-						break
-					}
-				}
-				if !alreadySelected {
-					selectedValues = append(selectedValues, value)
-					break
-				}
-				// If we've tried too many times, just use what we have
-				if len(selectedValues) > 0 && rand.Intn(5) == 0 {
-					break
-				}
+		expr := logdata.BuildLokiLabelFilterExpression(label, valueCount, useRegex)
+		labelExpressions = append(labelExpressions, expr)
+	}
+
+	// Join all label expressions
+	labelSelector := strings.Join(labelExpressions, ", ")
+
+	// Create the query string with the label selector
+	queryString := fmt.Sprintf("{%s}", labelSelector)
+
+	// Add text filters (AND, OR, NOT conditions)
+	if rand.Intn(10) > 3 { // 70% chance to add a text filter
+		// Text filter keywords
+		keywords := []string{
+			"error", "warning", "failed", "exception", "timeout",
+			"success", "completed", "started", "authenticated", "authorized",
+		}
+
+		// Choose 1-2 keywords
+		keywordCount := rand.Intn(2) + 1
+		for i := 0; i < keywordCount; i++ {
+			keyword := keywords[rand.Intn(len(keywords))]
+
+			// Randomly choose filter type
+			filterType := rand.Intn(4)
+			switch filterType {
+			case 0:
+				// Simple include
+				queryString = fmt.Sprintf("%s |= \"%s\"", queryString, keyword)
+			case 1:
+				// Case insensitive include
+				queryString = fmt.Sprintf("%s |~ \"(?i)%s\"", queryString, keyword)
+			case 2:
+				// Simple exclude
+				queryString = fmt.Sprintf("%s != \"%s\"", queryString, keyword)
+			case 3:
+				// Case insensitive exclude
+				queryString = fmt.Sprintf("%s !~ \"(?i)%s\"", queryString, keyword)
 			}
 		}
-
-		if len(selectedValues) > 0 {
-			conditions = append(conditions, fmt.Sprintf("%s=~\"%s\"", label, strings.Join(selectedValues, "|")))
-		}
-	}
-
-	// Ensure we have at least one condition
-	if len(conditions) == 0 {
-		return `{job=~".+"}`
-	}
-
-	// Create the query string
-	queryString := fmt.Sprintf("{%s}", strings.Join(conditions, ", "))
-
-	// Add text match filter
-	if rand.Intn(10) > 3 {
-		filters := []string{"error", "warning", "info", "debug", "GET", "POST", "DELETE"}
-		filter := filters[rand.Intn(len(filters))]
-		queryString = fmt.Sprintf(`%s |= "%s"`, queryString, filter)
 	}
 
 	return queryString
 }
 
 // generateAnalyticalQuery creates an analytical query
-func (e *LokiExecutor) generateAnalyticalQuery(availableLabels []string) string {
-	// If we have no available labels, return a valid count query
-	if len(availableLabels) == 0 {
-		return `count_over_time({job=~".+"}[5m])`
+func (e *LokiExecutor) generateAnalyticalQuery() string {
+	// Fields that we can unwrap from logs
+	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "level", "status_code"}
+
+	// Define aggregation functions including those requiring unwrap
+	aggregationFuncs := []string{
+		"sum", "min", "max", "avg", "stddev", "stdvar",
+		"sum_over_time", "min_over_time", "max_over_time",
+		"avg_over_time", "stddev_over_time", "stdvar_over_time",
+		"quantile_over_time", "first_over_time", "last_over_time",
+		"absent_over_time",
 	}
 
-	// Choose a random label from available labels
-	chosenLabel := availableLabels[rand.Intn(len(availableLabels))]
+	// Choose a time window
+	windows := []string{"5m", "10m", "30m", "1h", "2h"}
+	timeWindow := windows[rand.Intn(len(windows))]
 
-	// Get values for this label
-	values, err := e.GetLabelValues(context.Background(), chosenLabel)
-	if err != nil || len(values) == 0 {
-		// If no values, use a valid fallback
-		return `count_over_time({job=~".+"}[5m])`
-	}
-
-	// Choose 1-2 random values
-	count := rand.Intn(2) + 1
-	selectedValues := make([]string, 0, count)
-	for i := 0; i < count && i < len(values); i++ {
-		// Choose a random value that's not already selected
-		for {
-			value := values[rand.Intn(len(values))]
-			// Check if value is already selected
-			alreadySelected := false
-			for _, selected := range selectedValues {
-				if selected == value {
-					alreadySelected = true
-					break
-				}
-			}
-			if !alreadySelected {
-				selectedValues = append(selectedValues, value)
-				break
-			}
-			// If we've tried too many times, just use what we have
-			if len(selectedValues) > 0 && rand.Intn(5) == 0 {
-				break
-			}
-		}
-	}
-
-	// Create the selector
+	// Get a random label and its possible values
+	label := logdata.GetRandomLabel()
+	labelValues := logdata.GetLabelValuesMap()[label]
 	var selector string
-	if len(selectedValues) > 0 {
-		selector = fmt.Sprintf("{%s=~\"%s\"}", chosenLabel, strings.Join(selectedValues, "|"))
+
+	// 70% chance to use specific values instead of wildcard
+	if len(labelValues) > 0 && rand.Intn(10) < 7 {
+		// Use specific values
+		numValues := rand.Intn(3) + 1 // 1 to 3 values
+		if numValues > len(labelValues) {
+			numValues = len(labelValues)
+		}
+
+		selectedValues := make([]string, numValues)
+		for i := 0; i < numValues; i++ {
+			selectedValues[i] = labelValues[rand.Intn(len(labelValues))]
+		}
+
+		if len(selectedValues) == 1 {
+			selector = fmt.Sprintf(`{%s="%s"}`, label, selectedValues[0])
+		} else {
+			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(selectedValues, "|"))
+		}
 	} else {
-		selector = `{job=~".+"}`
+		// Use regex for all values
+		selector = fmt.Sprintf(`{%s=~".+"}`, label)
 	}
 
-	// Choose time window
-	timeWindows := []string{"1m", "5m", "10m", "15m"}
-	timeWindow := timeWindows[rand.Intn(len(timeWindows))]
+	var expression string
 
-	// Choose query pattern
-	pattern := rand.Intn(5)
+	// Random chance to use unwrap pattern for more complex queries
+	if rand.Intn(10) < 7 { // 70% chance to use unwrap
+		// Select a random field to unwrap
+		unwrapField := unwrapFields[rand.Intn(len(unwrapFields))]
 
-	switch pattern {
-	case 0:
-		// Simple count_over_time
-		return fmt.Sprintf("count_over_time(%s[%s])", selector, timeWindow)
-	case 1:
-		// Rate with proper syntax
-		return fmt.Sprintf("rate(%s[%s])", selector, timeWindow)
-	case 2:
-		// Sum by with count_over_time
-		// Choose a random label to group by
-		if len(availableLabels) > 1 {
-			groupByLabel := availableLabels[rand.Intn(len(availableLabels))]
-			// Make sure it's different from the selector label
-			if groupByLabel == chosenLabel && len(availableLabels) > 1 {
-				for _, label := range availableLabels {
-					if label != chosenLabel {
-						groupByLabel = label
-						break
-					}
-				}
-			}
-			return fmt.Sprintf("sum by(%s) (count_over_time(%s[%s]))", groupByLabel, selector, timeWindow)
+		// Select an aggregation function that works with unwrap
+		aggFunc := aggregationFuncs[rand.Intn(len(aggregationFuncs))]
+
+		// Create a query with unwrap
+		if strings.Contains(aggFunc, "_over_time") {
+			// For _over_time functions, we need to unwrap first then apply the function
+			expression = fmt.Sprintf("%s((%s | unwrap %s)[%s])",
+				aggFunc,
+				selector,
+				unwrapField,
+				timeWindow,
+			)
+		} else {
+			// For other aggregations, we can do the unwrap and then apply the function
+			expression = fmt.Sprintf("%s(%s | unwrap %s)",
+				aggFunc,
+				selector,
+				unwrapField,
+			)
 		}
-		// Fallback if only one label is available
-		return fmt.Sprintf("sum(count_over_time(%s[%s]))", selector, timeWindow)
-	case 3:
-		// Topk with count_over_time
-		k := rand.Intn(5) + 1
-		return fmt.Sprintf("topk(%d, count_over_time(%s[%s]))", k, selector, timeWindow)
-	case 4:
-		// Avg_over_time with proper unwrap syntax for Loki
-		// First, find a numeric field to unwrap if possible
-		numericLabels := []string{"bytes", "status", "duration", "size", "count", "value"}
-		var unwrapExpr string
+	} else {
+		// Simpler query without unwrap (for log counting style queries)
+		simpleFuncs := []string{"count_over_time", "rate", "bytes_rate", "bytes_over_time"}
+		simpleFunc := simpleFuncs[rand.Intn(len(simpleFuncs))]
 
-		// Try to find a numeric field in the available labels
-		foundNumeric := false
-		for _, label := range numericLabels {
-			if contains(availableLabels, label) {
-				unwrapExpr = fmt.Sprintf("| unwrap %s", label)
-				foundNumeric = true
-				break
-			}
-		}
-
-		if !foundNumeric {
-			// If no numeric field found, use count_over_time instead
-			return fmt.Sprintf("avg(count_over_time(%s[%s]))", selector, timeWindow)
-		}
-
-		return fmt.Sprintf("avg_over_time(%s %s [%s])", selector, unwrapExpr, timeWindow)
+		expression = fmt.Sprintf("%s(%s[%s])",
+			simpleFunc,
+			selector,
+			timeWindow,
+		)
 	}
 
-	// Fallback to simple count_over_time
-	return fmt.Sprintf("count_over_time(%s[%s])", selector, timeWindow)
+	return expression
 }
 
 // generateTimeSeriesQuery builds a Loki rate/avg_over_time query grouped by log_type
-func (e *LokiExecutor) generateTimeSeriesQuery(availableLabels []string) string {
-	selector := e.generateSimpleQuery(availableLabels) // reuse simple selector
-	// Compute per-second rate aggregated by log_type for the last 5m
-	return fmt.Sprintf("sum by (log_type) (rate(%s[5m]))", selector)
+func (e *LokiExecutor) generateTimeSeriesQuery() string {
+	// List of aggregation functions
+	aggFuncs := []string{"sum", "min", "max", "avg", "stddev", "stdvar", "count"}
+
+	// List of time window functions
+	timeWindowFuncs := []string{"rate", "count_over_time", "bytes_rate", "bytes_over_time"}
+
+	// Choose aggregation and time window function randomly
+	aggFunc := aggFuncs[rand.Intn(len(aggFuncs))]
+	timeWindowFunc := timeWindowFuncs[rand.Intn(len(timeWindowFuncs))]
+
+	// List of possible time windows
+	timeWindows := []string{"5m", "10m", "30m", "1h"}
+	timeWindow := timeWindows[rand.Intn(len(timeWindows))]
+
+	// Choose a label to use for filtering
+	filterLabel := logdata.GetRandomLabel()
+	filterLabelValues := logdata.GetLabelValuesMap()[filterLabel]
+
+	// Get a second label for grouping (make sure it's different from filter label)
+	var groupByLabel string
+	for {
+		groupByLabel = logdata.GetRandomLabel()
+		if groupByLabel != filterLabel {
+			break
+		}
+	}
+
+	// Create the filter selector
+	var selector string
+
+	// 70% chance to use specific values instead of wildcard
+	if len(filterLabelValues) > 0 && rand.Intn(10) < 7 {
+		// Use specific values
+		numValues := rand.Intn(3) + 1 // 1 to 3 values
+		if numValues > len(filterLabelValues) {
+			numValues = len(filterLabelValues)
+		}
+
+		selectedValues := make([]string, numValues)
+		for i := 0; i < numValues; i++ {
+			selectedValues[i] = filterLabelValues[rand.Intn(len(filterLabelValues))]
+		}
+
+		if len(selectedValues) == 1 {
+			selector = fmt.Sprintf(`{%s="%s"}`, filterLabel, selectedValues[0])
+		} else {
+			selector = fmt.Sprintf(`{%s=~"(%s)"}`, filterLabel, strings.Join(selectedValues, "|"))
+		}
+	} else {
+		// Use regex for all values
+		selector = fmt.Sprintf(`{%s=~".+"}`, filterLabel)
+	}
+
+	// Build the final query with aggregation by another label
+	query := fmt.Sprintf("%s by(%s) (%s(%s [%s]))",
+		aggFunc,
+		groupByLabel,
+		timeWindowFunc,
+		selector,
+		timeWindow,
+	)
+
+	return query
 }
 
 // generateStatQuery returns a single-value statistical aggregation (count over time)
 func (e *LokiExecutor) generateStatQuery(availableLabels []string) string {
-	selector := e.generateSimpleQuery(availableLabels)
-	return fmt.Sprintf("count_over_time(%s[10m])", selector)
+	// Define valid Loki aggregation functions
+	aggregationFuncs := []string{
+		"sum", "min", "max", "avg", "count", "stddev", "stdvar",
+	}
+
+	// Fields that we can unwrap from logs
+	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "level", "status_code"}
+
+	// Define valid time window functions compatible with Loki
+	timeWindowFuncs := []string{
+		"rate", "count_over_time", "bytes_over_time", "bytes_rate",
+		// Add _over_time functions that work with unwrap
+		"min_over_time", "max_over_time", "avg_over_time",
+		"sum_over_time", "stddev_over_time", "stdvar_over_time",
+	}
+
+	// Select random aggregation and time window function
+	aggregationFunc := aggregationFuncs[rand.Intn(len(aggregationFuncs))]
+	timeWindowFunc := timeWindowFuncs[rand.Intn(len(timeWindowFuncs))]
+
+	// Choose a time window
+	windows := []string{"5m", "10m", "30m", "1h", "2h"}
+	timeWindow := windows[rand.Intn(len(windows))]
+
+	// Get a random label and its possible values
+	label := logdata.GetRandomLabel()
+	labelValues := logdata.GetLabelValuesMap()[label]
+	var selector string
+
+	// 70% chance to use specific values instead of wildcard
+	if len(labelValues) > 0 && rand.Intn(10) < 7 {
+		// Use specific values
+		numValues := rand.Intn(3) + 1 // 1 to 3 values
+		if numValues > len(labelValues) {
+			numValues = len(labelValues)
+		}
+
+		selectedValues := make([]string, numValues)
+		for i := 0; i < numValues; i++ {
+			selectedValues[i] = labelValues[rand.Intn(len(labelValues))]
+		}
+
+		if len(selectedValues) == 1 {
+			selector = fmt.Sprintf(`{%s="%s"}`, label, selectedValues[0])
+		} else {
+			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(selectedValues, "|"))
+		}
+	} else {
+		// Use regex for all values
+		selector = fmt.Sprintf(`{%s=~".+"}`, label)
+	}
+
+	var expression string
+
+	// Check if we need to use unwrap pattern
+	if strings.Contains(timeWindowFunc, "_over_time") &&
+		timeWindowFunc != "count_over_time" &&
+		timeWindowFunc != "bytes_over_time" {
+		// These functions need unwrap
+		unwrapField := unwrapFields[rand.Intn(len(unwrapFields))]
+
+		expression = fmt.Sprintf("%s(%s((%s | unwrap %s)[%s]))",
+			aggregationFunc,
+			timeWindowFunc,
+			selector,
+			unwrapField,
+			timeWindow,
+		)
+	} else {
+		// Standard functions without unwrap
+		expression = fmt.Sprintf("%s(%s(%s [%s]))",
+			aggregationFunc,
+			timeWindowFunc,
+			selector,
+			timeWindow,
+		)
+	}
+
+	return expression
 }
 
 // generateTopKQuery returns top-K label values within a time window
 func (e *LokiExecutor) generateTopKQuery(availableLabels []string) string {
-	// Prefer a commonly existing label
-	label := "log_type"
-	if len(availableLabels) > 0 {
-		label = availableLabels[rand.Intn(len(availableLabels))]
+	// Define possible values for k (how many top results)
+	topKValues := []int{5, 10, 15, 20}
+	k := topKValues[rand.Intn(len(topKValues))]
+
+	// Choose a time window
+	windows := []string{"5m", "10m", "30m", "1h"}
+	timeWindow := windows[rand.Intn(len(windows))]
+
+	// Get a random label for filtering and a random grouping label
+	filterLabel := logdata.GetRandomLabel()
+	groupByLabel := logdata.GetRandomLabel()
+
+	// Avoid using the same label for filter and groupBy
+	for filterLabel == groupByLabel {
+		groupByLabel = logdata.GetRandomLabel()
 	}
-	selector := e.generateSimpleQuery(availableLabels)
-	return fmt.Sprintf("topk(10, sum by (%s) (%s))", label, selector)
+
+	// Generate selector using the filter label with actual values instead of regex
+	labelValues := logdata.GetLabelValuesMap()[filterLabel]
+	var selector string
+
+	if len(labelValues) > 0 && rand.Intn(2) == 0 {
+		// Use specific values for some queries (50% chance)
+		numValues := rand.Intn(3) + 1 // 1 to 3 values
+		if numValues > len(labelValues) {
+			numValues = len(labelValues)
+		}
+
+		selectedValues := make([]string, numValues)
+		for i := 0; i < numValues; i++ {
+			selectedValues[i] = labelValues[rand.Intn(len(labelValues))]
+		}
+
+		if len(selectedValues) == 1 {
+			selector = fmt.Sprintf(`{%s="%s"}`, filterLabel, selectedValues[0])
+		} else {
+			selector = fmt.Sprintf(`{%s=~"(%s)"}`, filterLabel, strings.Join(selectedValues, "|"))
+		}
+	} else {
+		// Use regex for all values
+		selector = fmt.Sprintf(`{%s=~".+"}`, filterLabel)
+	}
+
+	// Build the topk query according to Loki syntax
+	expression := fmt.Sprintf("topk(%d, count by(%s) (rate(%s[%s])))",
+		k,
+		groupByLabel,
+		selector,
+		timeWindow,
+	)
+
+	return expression
 }
 
 // contains checks if a string is in a slice
@@ -829,18 +599,13 @@ func contains(slice []string, item string) bool {
 
 // executeLokiQuery executes a query to Loki
 func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.QueryResult, error) {
-	// Form the query URL
+	// Form the query URL - only the endpoint, no parameters
 	queryURL := fmt.Sprintf("%s/loki/api/v1/query_range", e.BaseURL)
 
 	// Create the request body
 	params := url.Values{}
 	for key, value := range queryInfo {
 		params.Add(key, value)
-	}
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Loki URL: %s", queryURL)
-		log.Printf("Debug: Loki query: %s", queryInfo["query"])
 	}
 
 	// Create a new POST request with the parameters in the body
@@ -877,12 +642,29 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 		return models.QueryResult{}, fmt.Errorf("error unmarshaling response: %v", err)
 	}
 
+	// Parse start and end times - Loki uses nanosecond Unix timestamps
+	var startTimeObj, endTimeObj time.Time
+	if startTimeStr, ok := queryInfo["start"]; ok {
+		if nanoSec, err := strconv.ParseInt(startTimeStr, 10, 64); err == nil {
+			startTimeObj = time.Unix(0, nanoSec)
+		}
+	}
+	if endTimeStr, ok := queryInfo["end"]; ok {
+		if nanoSec, err := strconv.ParseInt(endTimeStr, 10, 64); err == nil {
+			endTimeObj = time.Unix(0, nanoSec)
+		}
+	}
+
 	// Create the result
 	result := models.QueryResult{
 		Duration:    time.Since(startTime),
 		RawResponse: bodyBytes,
 		BytesRead:   int64(len(bodyBytes)),
 		Status:      "success",
+		QueryString: queryInfo["query"],
+		StartTime:   startTimeObj,
+		EndTime:     endTimeObj,
+		Limit:       queryInfo["limit"],
 	}
 
 	// Extract the result type
@@ -916,7 +698,6 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 		}
 
 		result.HitCount = totalSamples
-		result.ResultCount = totalSamples
 
 	} else {
 		// Streams results (for log queries)
@@ -942,74 +723,7 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 		}
 
 		result.HitCount = totalEntries
-		result.ResultCount = totalEntries
-	}
-
-	// If no hits, perform a generic fallback query once
-	if result.HitCount == 0 {
-		if e.Options.Verbose {
-			log.Printf("Debug: Loki query returned 0 results, performing fallback")
-		}
-		// Use wide time range and generic pattern
-		now := time.Now()
-		start := fmt.Sprintf("%d", now.Add(-24*time.Hour).UnixNano())
-		end := fmt.Sprintf("%d", now.UnixNano())
-		fallback := map[string]string{
-			"query": "{log_type=~\".+\"}",
-			"start": start,
-			"end":   end,
-			"limit": "100",
-			"step":  "30s",
-		}
-		// Call recursively but avoid infinite loop by checking a flag in queryInfo
-		if _, tried := queryInfo["_fallback"]; !tried {
-			fallback["_fallback"] = "1"
-			return e.executeLokiQuery(fallback)
-		}
-	}
-
-	// Extract stats if available (but don't store them in the result as the struct doesn't have these fields)
-	if stats, ok := lokiResp["stats"].(map[string]interface{}); ok {
-		if e.Options.Verbose {
-			if summary, ok := stats["summary"].(map[string]interface{}); ok {
-				if bytesProcessedPerSecond, ok := summary["bytesProcessedPerSecond"].(float64); ok {
-					log.Printf("Debug: Loki bytesProcessedPerSecond: %f", bytesProcessedPerSecond)
-				}
-				if linesProcessedPerSecond, ok := summary["linesProcessedPerSecond"].(float64); ok {
-					log.Printf("Debug: Loki linesProcessedPerSecond: %f", linesProcessedPerSecond)
-				}
-			}
-		}
-	}
-
-	if e.Options.Verbose {
-		log.Printf("Debug: Loki found %d records, %d bytes", result.HitCount, result.BytesRead)
 	}
 
 	return result, nil
-}
-
-// LokiResponse represents the Loki API response for Query request
-type LokiResponse struct {
-	Status string `json:"status"`
-	Data   struct {
-		ResultType string        `json:"resultType"`
-		Result     []interface{} `json:"result"`
-		Stats      struct {
-			Summary struct {
-				BytesProcessedPerSecond int64   `json:"bytesProcessedPerSecond"`
-				LinesProcessedPerSecond int64   `json:"linesProcessedPerSecond"`
-				TotalBytesProcessed     int64   `json:"totalBytesProcessed"`
-				TotalLinesProcessed     int64   `json:"totalLinesProcessed"`
-				ExecTime                float64 `json:"execTime"`
-			} `json:"summary"`
-		} `json:"stats,omitempty"`
-	} `json:"data"`
-}
-
-// IsSystemChecked checks if the system check has completed
-func (e *LokiExecutor) IsSystemChecked() bool {
-	e.systemCheckedLock.RLock()
-	defer e.systemCheckedLock.RUnlock()
-	return e.systemChecked
 }

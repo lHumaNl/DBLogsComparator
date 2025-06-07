@@ -18,6 +18,7 @@ show_help() {
     echo "  --querier       - Start the log querier after starting the log systems"
     echo "  --combined      - Start the log combined after starting the log systems"
     echo "  --native        - Start the log generator natively (without Docker)"
+    echo "  --rebuild-native - Start the log tools natively and rebuild before starting"
     echo "  --no-monitoring - Don't start or check monitoring system (ignored with 'monitoring' log system)"
     echo "  --down          - Stop the specified log system and its containers"
     echo "  --stop-load - Stop only the log load tool (doesn't affect other systems)"
@@ -28,6 +29,7 @@ show_help() {
     echo "  $0 elk                       # Start ELK Stack and monitoring"
     echo "  $0 loki --generator          # Start Loki, monitoring, and log generator"
     echo "  $0 loki --generator --native # Start Loki, monitoring, and native log generator"
+    echo "  $0 loki --querier --rebuild-native # Start Loki, monitoring, and querier with rebuild"
     echo "  $0 victorialogs --no-monitoring # Start VictoriaLogs without monitoring"
     echo "  $0 elk --down                # Stop ELK Stack but leave monitoring running"
     echo "  $0 monitoring --down         # Stop the monitoring system"
@@ -231,16 +233,16 @@ stop_generator() {
     echo "Stopping Log Generator..."
     
     # Attempt to stop native generator if PID file exists
-    if [ -f "load_tool/generator.pid" ]; then
+    if [ -f "load_tool/load_tool.pid" ]; then
         echo "Attempting to stop natively running generator..."
-        PID=$(cat load_tool/generator.pid)
+        PID=$(cat load_tool/load_tool.pid)
         if ps -p $PID > /dev/null; then
             kill $PID
             echo "Native log generator (PID: $PID) stopped successfully!"
         else
             echo "Native log generator process (PID: $PID) not found, removing stale PID file"
         fi
-        rm -f load_tool/generator.pid
+        rm -f load_tool/load_tool.pid
     fi
     
     # Always try to stop Docker container as well
@@ -318,8 +320,13 @@ start_generator() {
         fi
         
         # Check if load_tool executable exists and build it if necessary
-        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ]; then
-            echo "load_tool executable not found or doesn't have execution permissions"
+        # Or rebuild if REBUILD_NATIVE is true
+        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ] || [ "$REBUILD_NATIVE" = "true" ]; then
+            if [ "$REBUILD_NATIVE" = "true" ]; then
+                echo "Forced rebuild requested with --rebuild-native"
+            else
+                echo "load_tool executable not found or doesn't have execution permissions"
+            fi
             echo "Building load_tool..."
             go build -o load_tool || {
                 echo "Error building load_tool"
@@ -337,7 +344,7 @@ start_generator() {
         
         echo "Log Generator started natively with PID: $GENERATOR_PID"
         # Save PID to file for later stopping
-        echo $GENERATOR_PID > ./generator.pid
+        echo $GENERATOR_PID > ./load_tool.pid
         cd - > /dev/null
     else
         # Start with Docker
@@ -360,21 +367,15 @@ start_generator() {
 
 # Function to start log querier
 start_querier() {
-    echo "Starting log querier..."
-    # Start the log querier
+    echo "Starting Log Querier..."
+    
+    # Read querier environment variables
     cd load_tool
     read_env_file ".env"
     cd - > /dev/null
     
-    # Check if we need to specify the destination
-    if [ -z "$DB_SYSTEM" ] || [ "$DB_SYSTEM" = "monitoring" ]; then
-        echo "Error: Cannot start log querier without a specific log system target."
-        echo "Please specify elk, loki, or victorialogs."
-        exit 1
-    fi
-    
-    # Set appropriate environment variables for the log querier based on DB_SYSTEM
-    export GENERATOR_TARGET=$DB_SYSTEM
+    # Set appropriate environment variables for the log generator based on DB_SYSTEM
+    export QUERIER_TARGET=$DB_SYSTEM
     
     # Convert DB_SYSTEM to what load_tool expects
     case $DB_SYSTEM in
@@ -405,8 +406,13 @@ start_querier() {
         fi
         
         # Check if load_tool executable exists and build it if necessary
-        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ]; then
-            echo "load_tool executable not found or doesn't have execution permissions"
+        # Or rebuild if REBUILD_NATIVE is true
+        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ] || [ "$REBUILD_NATIVE" = "true" ]; then
+            if [ "$REBUILD_NATIVE" = "true" ]; then
+                echo "Forced rebuild requested with --rebuild-native"
+            else
+                echo "load_tool executable not found or doesn't have execution permissions"
+            fi
             echo "Building load_tool..."
             go build -o load_tool || {
                 echo "Error building load_tool"
@@ -416,32 +422,28 @@ start_querier() {
             echo "load_tool built successfully"
         fi
         
-        # Run with specified config and hosts file for local execution
+        # Run with specified config and hosts file
         echo ""
         echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
         ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "querier" &
-        GENERATOR_PID=$!
+        QUERIER_PID=$!
         
-        echo "Log Querier started natively with PID: $GENERATOR_PID"
+        echo "Log Querier started natively with PID: $QUERIER_PID"
         # Save PID to file for later stopping
-        echo $GENERATOR_PID > ./generator.pid
+        echo $QUERIER_PID > ./load_tool.pid
         cd - > /dev/null
     else
         # Start with Docker
         echo "Starting log querier with Docker Compose..."
         cd load_tool
         
-        # First stop previous generator instances to avoid conflicts
-        echo "Stopping previous instances of log generator..."
+        # First stop any previous instances
+        echo "Stopping previous instances of log querier..."
         docker-compose down
         
         # Override environment variables for docker-compose
-        # Pass the selected logging system and mode through variables
-        # Add --build flag for automatic image rebuild when changes occur
         echo "Starting log querier with updated image..."
-        export SYSTEM=$SYSTEM_ARG
-        export MODE="querier"
-        docker-compose up -d --build
+        SYSTEM=$SYSTEM_ARG MODE="querier" docker-compose up -d --build
         echo "Log Querier started with Docker"
         cd - > /dev/null
     fi
@@ -449,21 +451,15 @@ start_querier() {
 
 # Function to start log combined
 start_combined() {
-    echo "Starting log combined..."
-    # Start the log combined
+    echo "Starting Log Combined..."
+    
+    # Read combined environment variables
     cd load_tool
     read_env_file ".env"
     cd - > /dev/null
     
-    # Check if we need to specify the destination
-    if [ -z "$DB_SYSTEM" ] || [ "$DB_SYSTEM" = "monitoring" ]; then
-        echo "Error: Cannot start log combined without a specific log system target."
-        echo "Please specify elk, loki, or victorialogs."
-        exit 1
-    fi
-    
-    # Set appropriate environment variables for the log combined based on DB_SYSTEM
-    export GENERATOR_TARGET=$DB_SYSTEM
+    # Set appropriate environment variables for the log generator based on DB_SYSTEM
+    export COMBINED_TARGET=$DB_SYSTEM
     
     # Convert DB_SYSTEM to what load_tool expects
     case $DB_SYSTEM in
@@ -494,8 +490,13 @@ start_combined() {
         fi
         
         # Check if load_tool executable exists and build it if necessary
-        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ]; then
-            echo "load_tool executable not found or doesn't have execution permissions"
+        # Or rebuild if REBUILD_NATIVE is true
+        if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ] || [ "$REBUILD_NATIVE" = "true" ]; then
+            if [ "$REBUILD_NATIVE" = "true" ]; then
+                echo "Forced rebuild requested with --rebuild-native"
+            else
+                echo "load_tool executable not found or doesn't have execution permissions"
+            fi
             echo "Building load_tool..."
             go build -o load_tool || {
                 echo "Error building load_tool"
@@ -505,28 +506,26 @@ start_combined() {
             echo "load_tool built successfully"
         fi
         
-        # Run with specified config and hosts file for local execution
+        # Run with specified config and hosts file
         echo ""
         echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
         ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "combined" &
-        GENERATOR_PID=$!
+        COMBINED_PID=$!
         
-        echo "Log Combined started natively with PID: $GENERATOR_PID"
+        echo "Log Combined started natively with PID: $COMBINED_PID"
         # Save PID to file for later stopping
-        echo $GENERATOR_PID > ./generator.pid
+        echo $COMBINED_PID > ./combined.pid
         cd - > /dev/null
     else
         # Start with Docker
         echo "Starting log combined with Docker Compose..."
         cd load_tool
         
-        # First stop previous generator instances to avoid conflicts
-        echo "Stopping previous instances of log generator..."
+        # First stop any previous instances
+        echo "Stopping previous instances of log combined..."
         docker-compose down
         
         # Override environment variables for docker-compose
-        # Pass the selected logging system and mode through variables
-        # Add --build flag for automatic image rebuild when changes occur
         echo "Starting log combined with updated image..."
         SYSTEM=$SYSTEM_ARG MODE="combined" docker-compose up -d --build
         echo "Log Combined started with Docker"
@@ -578,6 +577,7 @@ NO_MONITORING=false
 BRING_DOWN=false
 STOP_GENERATOR=false
 USE_NATIVE=false
+REBUILD_NATIVE=false
 
 for arg in "$@"; do
     case $arg in
@@ -588,6 +588,9 @@ for arg in "$@"; do
         --combined )    LAUNCH_COMBINED=true
                          ;;
         --native )      USE_NATIVE=true
+                         ;;
+        --rebuild-native ) USE_NATIVE=true
+                         REBUILD_NATIVE=true
                          ;;
         --no-monitoring ) NO_MONITORING=true
                          ;;

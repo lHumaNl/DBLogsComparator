@@ -7,4 +7,4 @@ elk/data
 monitoring/data
 **/**/go.sum
 load_tool/load_tool
-load_tool/generator.pid
+load_tool/load_tool.pid

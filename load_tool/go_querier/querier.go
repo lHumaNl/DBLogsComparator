@@ -2,12 +2,14 @@ package go_querier
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -16,6 +18,7 @@ import (
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/executors"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -31,10 +34,15 @@ const (
 
 // QueryResult represents the result of executing a query
 type QueryResult struct {
-	Duration  time.Duration // Execution time
-	HitCount  int           // Number of documents found
-	BytesRead int64         // Number of bytes read
-	Status    string        // Query status
+	Duration    time.Duration // Execution time
+	HitCount    int           // Number of documents found
+	BytesRead   int64         // Number of bytes read
+	Status      string        // Query status
+	RawResponse []byte        // Raw response from the query
+	QueryString string        // Query string
+	StartTime   time.Time     // Start time of the query
+	EndTime     time.Time     // End time of the query
+	Limit       string        // Limit of the query
 }
 
 // QueryExecutor interface for executing queries
@@ -69,6 +77,7 @@ type QueryConfig struct {
 	MaxRetries            int
 	RetryDelayMs          int
 	Verbose               bool
+	DisableVerboseLogging bool
 }
 
 // Duration returns the working time in time.Duration format
@@ -232,8 +241,23 @@ func runWorker(worker Worker) {
 
 			// Output query information if verbose mode is enabled
 			if worker.Config.Verbose {
-				fmt.Printf("[Worker %d] Query %s: found %d records, read %d bytes, time %v\n",
-					worker.ID, queryType, result.HitCount, result.BytesRead, duration)
+				// Format timerange for display
+				timeRangeStr := ""
+				if !result.StartTime.IsZero() && !result.EndTime.IsZero() {
+					startStr := result.StartTime.Format("2006-01-02 15:04:05")
+					endStr := result.EndTime.Format("2006-01-02 15:04:05")
+					timeRangeStr = fmt.Sprintf(" [%s to %s]", startStr, endStr)
+				}
+
+				// Format limit if available
+				limitStr := ""
+				if result.Limit != "" {
+					limitStr = fmt.Sprintf(" limit:%s", result.Limit)
+				}
+
+				// Log with query details
+				fmt.Printf("[Worker %d] Query %s: %s%s%s found %d records, read %d bytes, time %v\n",
+					worker.ID, queryType, result.QueryString, timeRangeStr, limitStr, result.HitCount, result.BytesRead, duration)
 			}
 		} else {
 			// Output error information
@@ -315,27 +339,46 @@ func main() {
 	rps := flag.Int("rps", 0, "Requests per second (overrides interval if set)")
 	timeoutMs := flag.Int("timeout", 5000, "Query timeout in milliseconds")
 	retryCount := flag.Int("retries", 3, "Query retry count")
+	logLevel := flag.String("log-level", "", "Log level (debug, info, warn, error, fatal, panic)")
+	logFormat := flag.String("log-format", "", "Log format (text, json)")
 	verbose := flag.Bool("verbose", false, "Verbose output")
 	queryType := flag.String("query-type", "", "Query type to use (simple, complex, analytical, timeseries, stat, topk). If empty, use all types.")
 
 	flag.Parse()
 
 	// Configure logger
-	log := logrus.New()
-	log.SetFormatter(&logrus.TextFormatter{
+	logger := logrus.StandardLogger()
+	logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,
 	})
 
-	if *verbose {
-		log.SetLevel(logrus.DebugLevel)
+	if *logLevel != "" {
+		level, err := logrus.ParseLevel(*logLevel)
+		if err != nil {
+			fmt.Printf("Invalid log level: %s\n", *logLevel)
+			os.Exit(1)
+		}
+		logger.SetLevel(level)
+	}
+
+	if *logFormat == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{})
 	} else {
-		log.SetLevel(logrus.InfoLevel)
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+		})
+	}
+
+	if *verbose {
+		logger.SetLevel(logrus.DebugLevel)
+	} else {
+		logger.SetLevel(logrus.InfoLevel)
 	}
 
 	// Create the executor
 	executor, err := createExecutor(*system, *serverHost, *serverPort, time.Duration(*timeoutMs)*time.Millisecond, *retryCount, *verbose)
 	if err != nil {
-		log.Fatalf("Failed to create executor: %v", err)
+		logger.Fatalf("Failed to create executor: %v", err)
 	}
 
 	// Calculate query interval
@@ -363,9 +406,9 @@ func main() {
 		case "topk":
 			selectedQueryType = models.TopKQuery
 		default:
-			log.Fatalf("Invalid query type: %s. Must be simple, complex, analytical, timeseries, stat, or topk", *queryType)
+			logger.Fatalf("Invalid query type: %s. Must be simple, complex, analytical, timeseries, stat, or topk", *queryType)
 		}
-		log.Infof("Using specified query type: %s", *queryType)
+		logger.Infof("Using specified query type: %s", *queryType)
 	}
 
 	// Create workers
@@ -377,7 +420,7 @@ func main() {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			log.Infof("Starting worker %d", workerID)
+			logger.Infof("Starting worker %d", workerID)
 
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
@@ -385,7 +428,7 @@ func main() {
 			for {
 				select {
 				case <-ctx.Done():
-					log.Infof("Worker %d stopping", workerID)
+					logger.Infof("Worker %d stopping", workerID)
 					return
 				case <-ticker.C:
 					// Determine query type
@@ -417,10 +460,49 @@ func main() {
 					queryDuration := time.Since(queryStartTime)
 
 					if err != nil {
-						log.Errorf("[Worker %d] Query failed: %v", workerID, err)
+						logger.Errorf("[Worker %d] Query failed: %v", workerID, err)
 					} else {
-						log.Infof("[Worker %d] Query %s: found %d records, read %d bytes, time %v",
-							workerID, qt, result.HitCount, result.BytesRead, queryDuration)
+						// Extract query details from result
+						queryText := ""
+						timeRange := ""
+						limit := ""
+						if result.RawResponse != nil {
+							// Try to extract query and time range from the raw response
+							var respMap map[string]interface{}
+							if jsonErr := json.Unmarshal(result.RawResponse, &respMap); jsonErr == nil {
+								if data, ok := respMap["config"].(map[string]interface{}); ok {
+									if q, ok := data["query"].(string); ok {
+										queryText = q
+									}
+									// Extract start and end times
+									if start, ok := data["start"].(string); ok {
+										if end, ok := data["end"].(string); ok {
+											// Format time strings to make them more readable if they're nanoseconds
+											startTime, startErr := parseNanosecondTime(start)
+											endTime, endErr := parseNanosecondTime(end)
+
+											if startErr == nil && endErr == nil {
+												timeRange = fmt.Sprintf("[%s to %s]",
+													startTime.Format("2006-01-02 15:04:05"),
+													endTime.Format("2006-01-02 15:04:05"))
+											} else {
+												timeRange = fmt.Sprintf("[%s to %s]", start, end)
+											}
+										}
+									}
+									// Extract limit
+									if limitVal, ok := data["limit"].(string); ok {
+										limit = fmt.Sprintf("limit:%s", limitVal)
+									}
+								}
+							}
+						}
+
+						// Output query results with full details
+						if *verbose {
+							fmt.Printf("[Worker %d] Query %s: %s %s %s found %d records, read %d bytes, time %v\n",
+								workerID, qt, queryText, timeRange, limit, result.HitCount, result.BytesRead, queryDuration)
+						}
 					}
 				}
 			}
@@ -432,8 +514,19 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	<-sigCh
-	log.Info("Stopping querier...")
+	logger.Info("Stopping querier...")
 	cancel()
 	wg.Wait()
-	log.Info("Querier stopped")
+	logger.Info("Querier stopped")
+}
+
+// parseNanosecondTime attempts to parse a string as a nanosecond timestamp
+// Returns the time or an error
+func parseNanosecondTime(timeStr string) (time.Time, error) {
+	// Try to parse as nanoseconds (Loki uses nanosecond timestamps)
+	ns, err := strconv.ParseInt(timeStr, 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(0, ns), nil
 }
