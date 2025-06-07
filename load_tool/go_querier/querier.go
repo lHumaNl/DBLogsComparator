@@ -104,12 +104,12 @@ type Worker struct {
 }
 
 // CreateQueryExecutor creates a query executor for the specified system
-func CreateQueryExecutor(mode, baseURL string, options models.Options) (models.QueryExecutor, error) {
+func CreateQueryExecutor(mode, baseURL string, options models.Options, workerID int) (models.QueryExecutor, error) {
 	fmt.Printf("Debug: CreateQueryExecutor called with mode=%s, baseURL=%s\n", mode, baseURL)
 	switch mode {
 	case "victoria", "victorialogs":
 		fmt.Println("Debug: Creating VictoriaLogs executor")
-		return executors.NewVictoriaLogsExecutor(baseURL, options), nil
+		return executors.NewVictoriaLogsExecutor(baseURL, options, workerID), nil
 	case "es", "elasticsearch", "elk":
 		fmt.Println("Debug: Creating Elasticsearch executor")
 		return executors.NewElasticsearchExecutor(baseURL, options), nil
@@ -307,7 +307,7 @@ func init() {
 }
 
 // createExecutor creates a new query executor for the specified system
-func createExecutor(system, host string, port int, timeout time.Duration, retryCount int, verbose bool) (models.QueryExecutor, error) {
+func createExecutor(system, host string, port int, timeout time.Duration, retryCount int, verbose bool, workerID int) (models.QueryExecutor, error) {
 	baseURL := fmt.Sprintf("http://%s:%d", host, port)
 
 	options := models.Options{
@@ -323,7 +323,7 @@ func createExecutor(system, host string, port int, timeout time.Duration, retryC
 	case "loki":
 		return executors.NewLokiExecutor(baseURL, options), nil
 	case "victorialogs", "victoria":
-		return executors.NewVictoriaLogsExecutor(baseURL, options), nil
+		return executors.NewVictoriaLogsExecutor(baseURL, options, workerID), nil
 	default:
 		return nil, errors.New("unsupported log system")
 	}
@@ -376,7 +376,7 @@ func main() {
 	}
 
 	// Create the executor
-	executor, err := createExecutor(*system, *serverHost, *serverPort, time.Duration(*timeoutMs)*time.Millisecond, *retryCount, *verbose)
+	executor, err := createExecutor(*system, *serverHost, *serverPort, time.Duration(*timeoutMs)*time.Millisecond, *retryCount, *verbose, 1)
 	if err != nil {
 		logger.Fatalf("Failed to create executor: %v", err)
 	}

@@ -24,7 +24,7 @@ func TestVictoriaLogsExecutor_GenerateRandomQuery(t *testing.T) {
 		RetryDelay: 100 * time.Millisecond,
 		Verbose:    false,
 	}
-	executor := NewVictoriaLogsExecutor("http://localhost:9428", options)
+	executor := NewVictoriaLogsExecutor("http://localhost:9428", options, 1)
 
 	testCases := []struct {
 		name      string
@@ -183,12 +183,9 @@ func TestVictoriaLogsExecutor_ExecuteQuery(t *testing.T) {
 
 	// Setup
 	options := models.Options{
-		Timeout:    10 * time.Second,
-		RetryCount: 3,
-		RetryDelay: 100 * time.Millisecond,
-		Verbose:    false,
+		Verbose: true,
 	}
-	executor := NewVictoriaLogsExecutor(server.URL, options)
+	executor := NewVictoriaLogsExecutor(server.URL, options, 1)
 
 	// Execute query - explicitly construct a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -219,12 +216,9 @@ func TestVictoriaLogsExecutor_ExecuteQuery_Error(t *testing.T) {
 
 	// Setup
 	options := models.Options{
-		Timeout:    10 * time.Second,
-		RetryCount: 0, // No retries to simplify test
-		RetryDelay: 100 * time.Millisecond,
-		Verbose:    false,
+		Verbose: true,
 	}
-	executor := NewVictoriaLogsExecutor(server.URL, options)
+	executor := NewVictoriaLogsExecutor(server.URL, options, 1)
 
 	// Execute query
 	ctx := context.Background()

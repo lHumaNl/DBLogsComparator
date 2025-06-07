@@ -4,22 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
-// VictoriaLogsExecutor is a query executor for VictoriaLogs
+// VictoriaLogsExecutor implements the QueryExecutor interface for VictoriaLogs
 type VictoriaLogsExecutor struct {
-	BaseURL    string
-	Client     *http.Client
-	Options    models.Options
-	SearchPath string
+	BaseURL            string
+	SearchPath         string
+	Client             *http.Client
+	Options            models.Options
+	availableLabels    []string
+	timeRangeGenerator *common.TimeRangeGenerator
+	// labelCache for caching label values
+	labelCache     map[string][]string
+	labelCacheLock sync.RWMutex
 }
 
 // VictoriaLogsResponse represents the response from VictoriaLogs
@@ -43,44 +52,36 @@ type VictoriaResult struct {
 	Value  []interface{}     `json:"value,omitempty"`
 }
 
-// Constants for query generation
-var (
-	// Fields available in log data based on actual logs
-	victoriaLogFields = []string{
-		"log_type", "host", "container_name", "environment", "datacenter", "timestamp",
-		"level", "message", "remote_addr", "request", "status", "bytes_sent", "http_referer", "http_user_agent", "request_time",
-		"error_code", "service", "exception", "stacktrace", "request_id", "request_path", "client_ip",
-		"trace_id", "span_id", "request_method", "response_status", "response_time",
-		"metric_name", "value", "region", "event_type", "resource_id", "namespace",
-	}
-
-	// Common phrases for keyword search
-	victoriaPhrases = []string{
-		"error", "warning", "exception", "failed", "timeout", "success",
-		"completed", "running", "critical", "forbidden", "GET", "POST", "PUT", "DELETE",
-	}
-
-	// Available log types for querying
-	logTypes = []string{
-		"web_access", "web_error", "application", "metric", "event",
-	}
-)
-
 // NewVictoriaLogsExecutor creates a new query executor for VictoriaLogs
-func NewVictoriaLogsExecutor(baseURL string, options models.Options) *VictoriaLogsExecutor {
+func NewVictoriaLogsExecutor(baseURL string, options models.Options, workerID int) *VictoriaLogsExecutor {
 	// Ensure the base URL ends with a slash
 	if !strings.HasSuffix(baseURL, "/") {
 		baseURL = baseURL + "/"
 	}
 
 	// Define the search path for VictoriaLogs API
-	searchPath := "select/logsql/query"
+	// This is the endpoint for querying logs
+	searchPath := "select/logsql"
+
+	// Initialize with common labels from our shared data package
+	availableLabels := logdata.CommonLabels
+
+	// Initialize the label cache with static values from common data
+	labelCache := make(map[string][]string)
+	labelValuesMap := logdata.GetLabelValuesMap()
+	for label, values := range labelValuesMap {
+		labelCache[label] = values
+	}
 
 	return &VictoriaLogsExecutor{
-		BaseURL:    baseURL,
-		Client:     &http.Client{Timeout: options.Timeout},
-		Options:    options,
-		SearchPath: searchPath,
+		BaseURL:            baseURL,
+		SearchPath:         searchPath,
+		Client:             &http.Client{Timeout: options.Timeout},
+		Options:            options,
+		availableLabels:    availableLabels,
+		timeRangeGenerator: common.NewTimeRangeGenerator(),
+		labelCache:         labelCache,
+		labelCacheLock:     sync.RWMutex{},
 	}
 }
 
@@ -89,369 +90,424 @@ func (e *VictoriaLogsExecutor) GetSystemName() string {
 	return "victorialogs"
 }
 
-// ExecuteQuery executes a query of the specified type in VictoriaLogs
+// ExecuteQuery executes a query of the given type against VictoriaLogs
 func (e *VictoriaLogsExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryType) (models.QueryResult, error) {
-	// Create a random query of the specified type
-	query := e.GenerateRandomQuery(queryType).(string)
+	var query string
 
-	// Execute the query to VictoriaLogs
-	result, err := e.executeVictoriaLogsQuery(ctx, query)
+	// Generate the query based on the specified query type
+	switch queryType {
+	case models.SimpleQuery:
+		query = e.generateSimpleQuery(e.availableLabels)
+	case models.ComplexQuery:
+		query = e.generateComplexQuery(e.availableLabels)
+	case models.AnalyticalQuery:
+		query = e.generateAnalyticalQuery()
+	case models.TimeSeriesQuery:
+		query = e.generateTimeSeriesQuery()
+	case models.StatQuery:
+		query = e.generateStatQuery(e.availableLabels)
+	case models.TopKQuery:
+		query = e.generateTopKQuery(e.availableLabels)
+	default:
+		return models.QueryResult{}, fmt.Errorf("unsupported query type: %s", string(queryType))
+	}
+
+	// Generate a time range using our time range generator
+	timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
+
+	// Convert time range to RFC3339 format
+	startTime := timeRange.Start.Format(time.RFC3339)
+	endTime := timeRange.End.Format(time.RFC3339)
+
+	// Prepare the query parameters
+	queryInfo := map[string]string{
+		"query": query,
+		"start": startTime,
+		"end":   endTime,
+	}
+
+	// Add limit parameter
+	limit := strconv.Itoa(rand.Intn(100) + 1)
+	queryInfo["limit"] = limit
+
+	// VictoriaLogs may need a step parameter for some queries
+	queryInfo["step"] = "60s"
+
+	// Execute the query with the prepared parameters
+	result, err := e.executeVictoriaLogsQuery(queryInfo)
 	if err != nil {
-		return models.QueryResult{}, err
+		return models.QueryResult{}, fmt.Errorf("%s query error: %v", string(queryType), err)
 	}
 
 	return result, nil
 }
 
-// GenerateRandomQuery generates a random LogsQL query for VictoriaLogs
+// GetLabelValues retrieves label values from static data or cache
+func (e *VictoriaLogsExecutor) GetLabelValues(ctx context.Context, label string) ([]string, error) {
+	// Check if we have this label in our cache
+	e.labelCacheLock.RLock()
+	values, exists := e.labelCache[label]
+	e.labelCacheLock.RUnlock()
+
+	if exists {
+		return values, nil
+	}
+
+	// For any label we don't have in our static data, return some generic values
+	genericValues := []string{"value1", "value2", "value3", "value-" + strconv.Itoa(rand.Intn(100))}
+
+	// Cache these values for future use
+	e.labelCacheLock.Lock()
+	e.labelCache[label] = genericValues
+	e.labelCacheLock.Unlock()
+
+	return genericValues, nil
+}
+
+// GenerateRandomQuery generates a random query of the specific type
 func (e *VictoriaLogsExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	// Common time range - last 7 days
-	now := time.Now()
-	startTime := now.Add(-168 * time.Hour) // 7 days
+	// Generate a random time range based on the configuration
+	timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
+	startTime := timeRange.Start
+	endTime := timeRange.End
 
-	// Format timestamps as strings for use in VictoriaLogs queries
-	// Note: VictoriaLogs supports both Unix timestamps and ISO format
-	// startTimeStamp := startTime.Unix()
-	// endTimeStamp := now.Unix()
+	// Format timestamps for VictoriaLogs in ISO 8601 format
+	startTimeStr := startTime.Format(time.RFC3339)
+	endTimeStr := endTime.Format(time.RFC3339)
 
-	// Generate ISO format for queries
-	startTimeISO := startTime.Format(time.RFC3339)
-	endTimeISO := now.Format(time.RFC3339)
+	// Generate random limit
+	limit := strconv.Itoa(rand.Intn(100) + 1)
 
-	var query string
+	// Generate random step for time series queries
+	step := "60s" // Default
+	steps := []string{"10s", "30s", "60s", "5m", "10m", "30m"}
+	if queryType == models.TimeSeriesQuery {
+		step = steps[rand.Intn(len(steps))]
+	}
 
+	// Generate the query string based on query type
+	var queryString string
 	switch queryType {
 	case models.SimpleQuery:
-		// Simple query - random choice between different types
-		queryType := rand.Intn(5)
-		switch queryType {
-		case 0:
-			// Query by log_type
-			logType := logTypes[rand.Intn(len(logTypes))]
-			query = fmt.Sprintf("select * where log_type=%q AND timestamp>=\"%s\" AND timestamp<=\"%s\"",
-				logType, startTimeISO, endTimeISO)
-
-		case 1:
-			// Search by keyword in message
-			keyword := victoriaPhrases[rand.Intn(len(victoriaPhrases))]
-			query = fmt.Sprintf("select * where message=~%q AND timestamp>=\"%s\" AND timestamp<=\"%s\"",
-				keyword, startTimeISO, endTimeISO)
-
-		case 2:
-			// Search by level (for web_error and application logs)
-			levels := []string{"debug", "info", "warn", "error", "critical"}
-			level := levels[rand.Intn(len(levels))]
-			query = fmt.Sprintf("select * where level=%q AND timestamp>=\"%s\" AND timestamp<=\"%s\"",
-				level, startTimeISO, endTimeISO)
-
-		case 3:
-			// Search by status (for web_access logs)
-			statuses := []int{200, 201, 204, 301, 302, 400, 401, 403, 404, 500, 502, 503}
-			status := statuses[rand.Intn(len(statuses))]
-			query = fmt.Sprintf("select * where status=%d AND log_type=\"web_access\" AND timestamp>=\"%s\" AND timestamp<=\"%s\"",
-				status, startTimeISO, endTimeISO)
-
-		default:
-			// Simple query with only time filter and container name, most likely to find logs
-			containers := []string{"app", "web", "api", "db", "cache", "auth"}
-			container := containers[rand.Intn(len(containers))]
-			query = fmt.Sprintf("select * where container_name=~%q AND timestamp>=\"%s\" AND timestamp<=\"%s\"",
-				container, startTimeISO, endTimeISO)
-		}
-
+		queryString = e.generateSimpleQuery(e.availableLabels)
 	case models.ComplexQuery:
-		// Complex query with multiple conditions based on log type
-		logType := logTypes[rand.Intn(len(logTypes))]
-
-		// Base condition always includes log_type and timestamp
-		baseCondition := fmt.Sprintf("log_type=%q AND timestamp>=\"%s\" AND timestamp<=\"%s\"",
-			logType, startTimeISO, endTimeISO)
-
-		additionalConditions := []string{}
-
-		// Add type-specific conditions
-		switch logType {
-		case "web_access":
-			// For web_access, add conditions related to HTTP status, method or bytes
-			if rand.Intn(2) == 0 {
-				// Filter by status range
-				statuses := []int{200, 400, 500}
-				status := statuses[rand.Intn(len(statuses))]
-				condition := fmt.Sprintf("status>=%d AND status<%d", status, status+100)
-				additionalConditions = append(additionalConditions, condition)
-			} else {
-				// Filter by method
-				methods := []string{"GET", "POST", "PUT", "DELETE"}
-				method := methods[rand.Intn(len(methods))]
-				condition := fmt.Sprintf("request=~\"^%s \"", method)
-				additionalConditions = append(additionalConditions, condition)
-			}
-
-			// Maybe add a condition for bytes_sent
-			if rand.Intn(2) == 0 {
-				condition := fmt.Sprintf("bytes_sent>%d", 1000*rand.Intn(10))
-				additionalConditions = append(additionalConditions, condition)
-			}
-
-		case "web_error":
-			// For web_error, add conditions related to error_code, level
-			levels := []string{"error", "critical"}
-			level := levels[rand.Intn(len(levels))]
-			condition := fmt.Sprintf("level=%q", level)
-			additionalConditions = append(additionalConditions, condition)
-
-			// Maybe add condition for error_code
-			if rand.Intn(2) == 0 {
-				condition := fmt.Sprintf("error_code>%d", 1000+rand.Intn(1000))
-				additionalConditions = append(additionalConditions, condition)
-			}
-
-		case "application":
-			// For application, add conditions related to service, level, response_status
-			levels := []string{"debug", "info", "warn", "error", "critical"}
-			level := levels[rand.Intn(len(levels))]
-			condition := fmt.Sprintf("level=%q", level)
-			additionalConditions = append(additionalConditions, condition)
-
-			// Add service condition
-			services := []string{"user-service", "auth-service", "payment-service", "order-service", "catalog-service"}
-			service := services[rand.Intn(len(services))]
-			condition = fmt.Sprintf("service=%q", service)
-			additionalConditions = append(additionalConditions, condition)
-
-			// Maybe add response_status condition
-			if rand.Intn(2) == 0 {
-				statuses := []int{200, 201, 204, 400, 401, 403, 404, 500}
-				status := statuses[rand.Intn(len(statuses))]
-				condition := fmt.Sprintf("response_status=%d", status)
-				additionalConditions = append(additionalConditions, condition)
-			}
-
-		case "metric":
-			// For metric, add conditions related to metric_name, value, region
-			metricNames := []string{"cpu_usage", "memory_usage", "disk_usage", "network_in", "network_out"}
-			metricName := metricNames[rand.Intn(len(metricNames))]
-			condition := fmt.Sprintf("metric_name=%q", metricName)
-			additionalConditions = append(additionalConditions, condition)
-
-			// Maybe add value range condition
-			if rand.Intn(2) == 0 {
-				condition := fmt.Sprintf("value>%f", rand.Float64()*100)
-				additionalConditions = append(additionalConditions, condition)
-			}
-
-		case "event":
-			// For event, add conditions related to event_type, namespace
-			eventTypes := []string{"system_start", "system_stop", "deploy", "rollback", "config_change"}
-			eventType := eventTypes[rand.Intn(len(eventTypes))]
-			condition := fmt.Sprintf("event_type=%q", eventType)
-			additionalConditions = append(additionalConditions, condition)
-		}
-
-		// Maybe add a general message keyword search
-		if rand.Intn(2) == 0 {
-			keyword := victoriaPhrases[rand.Intn(len(victoriaPhrases))]
-			condition := fmt.Sprintf("message=~%q", keyword)
-			additionalConditions = append(additionalConditions, condition)
-		}
-
-		// Form the final complex query
-		query = "select * where " + baseCondition
-		if len(additionalConditions) > 0 {
-			query += " AND " + strings.Join(additionalConditions, " AND ")
-		}
-
+		queryString = e.generateComplexQuery(e.availableLabels)
 	case models.AnalyticalQuery:
-		// Analytical query with aggregation based on log type
-		logType := logTypes[rand.Intn(len(logTypes))]
+		queryString = e.generateAnalyticalQuery()
+	case models.TimeSeriesQuery:
+		queryString = e.generateTimeSeriesQuery()
+	case models.StatQuery:
+		queryString = e.generateStatQuery(e.availableLabels)
+	case models.TopKQuery:
+		queryString = e.generateTopKQuery(e.availableLabels)
+	}
 
-		// Base time condition
-		timeCondition := fmt.Sprintf("timestamp>=\"%s\" AND timestamp<=\"%s\"", startTimeISO, endTimeISO)
+	// Return parameters as map for request body
+	return map[string]string{
+		"query": queryString,
+		"start": startTimeStr,
+		"end":   endTimeStr,
+		"limit": limit,
+		"step":  step,
+	}
+}
 
-		switch logType {
-		case "web_access":
-			// For web_access, count by status or calculate average bytes_sent
-			if rand.Intn(2) == 0 {
-				// Count by status
-				query = fmt.Sprintf("select count() by status where log_type=\"web_access\" AND %s", timeCondition)
+// generateSimpleQuery creates a simple query with label equality filter
+func (e *VictoriaLogsExecutor) generateSimpleQuery(availableLabels []string) string {
+	// Choose a random label from available labels
+	var chosenLabel string
+
+	// Try to use commonly populated labels first
+	commonLabels := []string{"log_type", "host", "container_name", "service", "level", "environment"}
+
+	// Check if any of the common labels are available
+	for _, label := range commonLabels {
+		if logdata.Contains(availableLabels, label) {
+			chosenLabel = label
+			break
+		}
+	}
+
+	// If no common label found, choose any random label
+	if chosenLabel == "" && len(availableLabels) > 0 {
+		chosenLabel = availableLabels[rand.Intn(len(availableLabels))]
+	} else if chosenLabel == "" {
+		chosenLabel = "log_type"
+	}
+
+	// Get 1-2 random values for this label using the common function from logdata
+	count := rand.Intn(2) + 1
+	selectedValues := logdata.GetMultipleRandomValuesForLabel(chosenLabel, count)
+
+	// Create the query string in VictoriaLogs LogsQL syntax
+	var queryString string
+	if len(selectedValues) > 0 {
+		// Most queries will use exact matching
+		if rand.Intn(10) < 8 {
+			if len(selectedValues) == 1 {
+				queryString = fmt.Sprintf("%s=%q", chosenLabel, selectedValues[0])
 			} else {
-				// Average bytes sent
-				query = fmt.Sprintf("select avg(bytes_sent) by status where log_type=\"web_access\" AND %s", timeCondition)
+				// For multiple values, VictoriaLogs uses OR pattern
+				values := make([]string, 0, len(selectedValues))
+				for _, v := range selectedValues {
+					values = append(values, fmt.Sprintf("%s=%q", chosenLabel, v))
+				}
+				queryString = strings.Join(values, " OR ")
 			}
+		} else {
+			// Some queries will use regex matching
+			pattern := strings.Join(selectedValues, "|")
+			queryString = fmt.Sprintf("%s=~\"(%s)\"", chosenLabel, pattern)
+		}
+	} else {
+		// Fallback for empty values
+		queryString = fmt.Sprintf("%s!=\"\"", chosenLabel)
+	}
 
-		case "web_error":
-			// For web_error, count by error_code or level
-			if rand.Intn(2) == 0 {
-				query = fmt.Sprintf("select count() by error_code where log_type=\"web_error\" AND %s", timeCondition)
-			} else {
-				query = fmt.Sprintf("select count() by level where log_type=\"web_error\" AND %s", timeCondition)
-			}
+	// Add text search with 50% probability
+	if rand.Intn(2) == 0 {
+		// Common keywords to search for in logs
+		keywords := []string{
+			"error", "warning", "failed", "exception", "timeout",
+			"success", "completed", "started", "INFO", "DEBUG",
+		}
+		keyword := keywords[rand.Intn(len(keywords))]
 
-		case "application":
-			// For application, count by service or level
-			if rand.Intn(2) == 0 {
-				query = fmt.Sprintf("select count() by service where log_type=\"application\" AND %s", timeCondition)
-			} else {
-				query = fmt.Sprintf("select count() by level where log_type=\"application\" AND %s", timeCondition)
-			}
+		// In LogsQL, full-text search is done with simple words
+		queryString = fmt.Sprintf("%s %s", queryString, keyword)
+	}
 
-		case "metric":
-			// For metric, average values by metric_name
-			query = fmt.Sprintf("select avg(value) by metric_name where log_type=\"metric\" AND %s", timeCondition)
+	return queryString
+}
 
-		case "event":
-			// For event, count by event_type
-			query = fmt.Sprintf("select count() by event_type where log_type=\"event\" AND %s", timeCondition)
+// generateComplexQuery creates a complex query with multiple filters
+func (e *VictoriaLogsExecutor) generateComplexQuery(availableLabels []string) string {
+	// Select multiple random labels
+	labelCount := rand.Intn(3) + 2 // 2-4 labels
 
-		default:
-			// Generic count by log_type
-			query = fmt.Sprintf("select count() by log_type where %s", timeCondition)
+	// Make sure we don't try to select more labels than available
+	if labelCount > len(availableLabels) {
+		labelCount = len(availableLabels)
+	}
+
+	// Get random labels without duplicates
+	selectedLabels := logdata.GetRandomLabels(labelCount)
+
+	// Make sure log_type is included for better querying
+	hasLogType := logdata.Contains(selectedLabels, "log_type")
+	if !hasLogType && len(selectedLabels) < labelCount {
+		selectedLabels = append(selectedLabels, "log_type")
+	}
+
+	// Build conditions for each selected label
+	conditions := make([]string, 0, len(selectedLabels))
+
+	for _, label := range selectedLabels {
+		// Get values for this label from logdata package
+		var selectedValues []string
+
+		// Choose 1-2 random values for most conditions
+		valueCount := 1
+		if rand.Intn(10) > 6 { // 30% chance of multiple values
+			valueCount = 2
 		}
 
-	case models.TimeSeriesQuery:
-		// Time-series aggregation: average metric value by minute for one metric_name
-		metricNames := []string{"cpu_usage", "memory_usage", "disk_usage"}
-		metricName := metricNames[rand.Intn(len(metricNames))]
-		query = fmt.Sprintf("select avg(value) by time(1m) where log_type=\"metric\" AND metric_name=\"%s\" AND timestamp>=\"%s\" AND timestamp<=\"%s\"", metricName, startTimeISO, endTimeISO)
+		selectedValues = logdata.GetMultipleRandomValuesForLabel(label, valueCount)
 
-	case models.StatQuery:
-		// Single number – count of logs for chosen type
-		lt := logTypes[rand.Intn(len(logTypes))]
-		query = fmt.Sprintf("select count() where log_type=\"%s\" AND timestamp>=\"%s\" AND timestamp<=\"%s\"", lt, startTimeISO, endTimeISO)
+		if len(selectedValues) == 0 {
+			continue
+		}
 
-	case models.TopKQuery:
-		// Top-K services by log volume in last day
-		query = fmt.Sprintf("select topk(10)(count()) by service where timestamp>=\"%s\" AND timestamp<=\"%s\"", startTimeISO, endTimeISO)
-
-	default:
-		// Fallback to simple all
-		query = fmt.Sprintf("select * where timestamp>=\"%s\" AND timestamp<=\"%s\"", startTimeISO, endTimeISO)
+		// For some labels use regex matching, for others exact matching
+		if rand.Intn(10) < 7 { // 70% chance of exact matching
+			if len(selectedValues) == 1 {
+				// Single value exact match
+				conditions = append(conditions, fmt.Sprintf("%s=%q", label, selectedValues[0]))
+			} else {
+				// Multiple values with OR
+				labelConditions := make([]string, 0, len(selectedValues))
+				for _, value := range selectedValues {
+					labelConditions = append(labelConditions, fmt.Sprintf("%s=%q", label, value))
+				}
+				conditions = append(conditions, "("+strings.Join(labelConditions, " OR ")+")")
+			}
+		} else { // 30% chance of regex matching
+			pattern := strings.Join(selectedValues, "|")
+			conditions = append(conditions, fmt.Sprintf("%s=~\"(%s)\"", label, pattern))
+		}
 	}
 
-	// Debug output
-	if e.Options.Verbose {
-		fmt.Printf("Debug: VictoriaLogs query: %s\n", query)
+	// Add text search with 50% probability
+	if rand.Intn(2) == 0 {
+		// Keywords to search for
+		keywords := []string{
+			"error", "warning", "failed", "exception", "timeout",
+			"success", "completed", "started", "INFO", "DEBUG",
+		}
+		keyword := keywords[rand.Intn(len(keywords))]
+
+		// In LogsQL, full-text search is done with simple words
+		conditions = append(conditions, keyword)
 	}
+
+	// Build the final query by joining conditions with AND
+	query := strings.Join(conditions, " AND ")
 
 	return query
 }
 
-// executeVictoriaLogsQuery executes a query to VictoriaLogs
-func (e *VictoriaLogsExecutor) executeVictoriaLogsQuery(ctx context.Context, query string) (models.QueryResult, error) {
-	// Form the query URL
-	queryURL, err := url.Parse(e.BaseURL + e.SearchPath)
-	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("error forming URL: %v", err)
+// generateStatQuery generates a statistical query for VictoriaLogs
+func (e *VictoriaLogsExecutor) generateStatQuery(availableLabels []string) string {
+	// Выбираем случайную метку для фильтрации
+	labelIdx := rand.Intn(len(availableLabels))
+	chosenLabel := availableLabels[labelIdx]
+	chosenValue := logdata.GetRandomValueForLabel(chosenLabel)
+
+	// Правильный синтаксис VictoriaLogs для статистики
+	return fmt.Sprintf(`%s="%s" | stats count() as count_value`,
+		chosenLabel, chosenValue)
+}
+
+// generateTopKQuery генерирует top-K запрос для VictoriaLogs
+func (e *VictoriaLogsExecutor) generateTopKQuery(availableLabels []string) string {
+	// Выбираем случайную метку для фильтрации
+	labelIdx := rand.Intn(len(availableLabels))
+	chosenLabel := availableLabels[labelIdx]
+	chosenValue := logdata.GetRandomValueForLabel(chosenLabel)
+
+	// Выбираем случайную метку для группировки
+	groupByLabelIdx := rand.Intn(len(availableLabels))
+	groupByLabel := availableLabels[groupByLabelIdx]
+
+	// Случайный лимит для top-K
+	limit := rand.Intn(20) + 5
+
+	// Используем правильный синтаксис для TopK запроса
+	return fmt.Sprintf(`%s="%s" | stats by (%s) count() as count_value | sort by (count_value desc) | limit %d`,
+		chosenLabel, chosenValue, groupByLabel, limit)
+}
+
+// generateAnalyticalQuery генерирует аналитический запрос для VictoriaLogs
+func (e *VictoriaLogsExecutor) generateAnalyticalQuery() string {
+	// Выбираем случайный тип логов
+	logType := logdata.LogTypes[rand.Intn(len(logdata.LogTypes))]
+
+	// Выбираем метку для группировки
+	groupByLabels := []string{"service", "container_name", "host", "level", "environment"}
+	groupByLabel := groupByLabels[rand.Intn(len(groupByLabels))]
+
+	// Используем правильный синтаксис для аналитических запросов
+	return fmt.Sprintf(`log_type="%s" | stats by (%s) count() as count_value`,
+		logType, groupByLabel)
+}
+
+// generateTimeSeriesQuery генерирует запрос временного ряда для VictoriaLogs
+func (e *VictoriaLogsExecutor) generateTimeSeriesQuery() string {
+	// Выбираем случайные типы логов и уровни
+	logType := logdata.LogTypes[rand.Intn(len(logdata.LogTypes))]
+
+	// VictoriaLogs не поддерживает sample_over, используем более простые запросы
+	// для временных рядов (фильтрация по времени обрабатывается в ExecuteQuery)
+	return fmt.Sprintf(`log_type="%s" | limit 100`, logType)
+}
+
+// executeVictoriaLogsQuery executes a query against VictoriaLogs
+func (e *VictoriaLogsExecutor) executeVictoriaLogsQuery(queryInfo map[string]string) (models.QueryResult, error) {
+	startTime := time.Now()
+
+	// Правильный эндпоинт для запросов к VictoriaLogs с проверкой на слэш в конце
+	var queryURL string
+	if strings.HasSuffix(e.BaseURL, "/") {
+		queryURL = e.BaseURL + "select/logsql/query"
+	} else {
+		queryURL = e.BaseURL + "/select/logsql/query"
 	}
 
-	// Debug - print the query
-	if e.Options.Verbose {
-		fmt.Printf("Debug: VictoriaLogs original query: %s\n", query)
+	// Подготовка параметров запроса
+	params := url.Values{}
+	for key, value := range queryInfo {
+		params.Add(key, value)
 	}
 
-	// Override the query to match all documents if needed
-	if e.Options.Verbose && rand.Intn(5) == 0 {
-		// Every 5th query, try a simple query to find any logs in the system
-		now := time.Now()
-		startTime := now.Add(-168 * time.Hour) // 7 days
-		// Use 'timestamp' field that matches what go_generator produces
-		startTimeISO := startTime.Format(time.RFC3339)
-		endTimeISO := now.Format(time.RFC3339)
-		simpleQuery := fmt.Sprintf("select * where timestamp>=\"%s\" AND timestamp<=\"%s\"", startTimeISO, endTimeISO)
-		query = simpleQuery
-		fmt.Printf("Debug: Using simple time-only query: %s\n", query)
-	}
-
-	// Create the form data for POST request
-	formData := url.Values{}
-	formData.Set("query", query)
-
-	// Create HTTP request - using POST with form data
-	req, err := http.NewRequestWithContext(
-		ctx,
-		"POST",
-		queryURL.String(),
-		strings.NewReader(formData.Encode()),
-	)
+	// Создаем POST запрос с параметрами в теле
+	req, err := http.NewRequestWithContext(context.Background(), "POST", queryURL, strings.NewReader(params.Encode()))
 	if err != nil {
 		return models.QueryResult{}, fmt.Errorf("error creating request: %v", err)
 	}
 
-	// Set headers for form POST data
+	// Устанавливаем правильные заголовки
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	// Execute the request
-	startTime := time.Now()
+	// Выполняем запрос
 	resp, err := e.Client.Do(req)
-	duration := time.Since(startTime)
-
 	if err != nil {
-		return models.QueryResult{}, fmt.Errorf("error executing request: %v", err)
+		return models.QueryResult{}, fmt.Errorf("error sending request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Read the response
-	body, err := ioutil.ReadAll(resp.Body)
+	// Засекаем время выполнения запроса
+	duration := time.Since(startTime)
+
+	// Проверяем статус ответа
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return models.QueryResult{}, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Читаем ответ
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return models.QueryResult{}, fmt.Errorf("error reading response: %v", err)
 	}
 
-	// Check response code
-	if resp.StatusCode != http.StatusOK {
-		return models.QueryResult{}, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	// For debugging - print response body
-	if e.Options.Verbose {
-		fmt.Printf("Debug: VictoriaLogs response body: %s\n", string(body))
-	}
-
-	// If body is empty, return empty result with success
-	if len(body) == 0 || string(body) == "" {
+	// Проверка на пустой ответ
+	if len(bodyBytes) == 0 {
 		return models.QueryResult{
-			Duration:  duration,
-			HitCount:  0,
-			BytesRead: 0,
-			Status:    "success",
+			Duration:    duration,
+			HitCount:    0,
+			ResultCount: 0,
+			BytesRead:   0,
+			Status:      resp.Status,
+			RawResponse: bodyBytes,
+			QueryString: queryInfo["query"],
 		}, nil
 	}
 
-	// Decode the response
+	// Декодируем JSON-ответ
 	var response VictoriaLogsResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		// If we can't parse as JSON, but status code is OK,
-		// we'll return a success result but with zero hits
+
+	if err := json.Unmarshal(bodyBytes, &response); err != nil {
+		// Если не удалось распарсить как JSON, но статус OK, возвращаем результат с данными о размере
 		return models.QueryResult{
-			Duration:  duration,
-			HitCount:  0,
-			BytesRead: int64(len(body)),
-			Status:    "success",
+			Duration:    duration,
+			HitCount:    0,
+			ResultCount: 0,
+			BytesRead:   int64(len(bodyBytes)),
+			Status:      resp.Status,
+			RawResponse: bodyBytes,
+			QueryString: queryInfo["query"],
 		}, nil
 	}
 
-	// Check for errors in the response
-	if response.Status == "error" {
-		return models.QueryResult{}, fmt.Errorf("query error: %s: %s", response.ErrorType, response.Error)
-	}
-
-	// Count the number of results
+	// Подсчитываем общее количество возвращенных логов
 	hitCount := 0
-	for _, result := range response.Data.Result {
-		if len(result.Values) > 0 {
-			hitCount += len(result.Values)
-		} else if len(result.Value) > 0 {
-			hitCount++
+	if response.Data.Result != nil {
+		for _, result := range response.Data.Result {
+			if result.Values != nil {
+				hitCount += len(result.Values)
+			}
 		}
 	}
 
-	// Create the result
-	result := models.QueryResult{
-		Duration:  duration,
-		HitCount:  hitCount,
-		BytesRead: int64(len(body)),
-		Status:    response.Status,
-	}
-
-	return result, nil
+	// Возвращаем структурированный результат
+	return models.QueryResult{
+		Duration:    duration,
+		HitCount:    hitCount,
+		ResultCount: hitCount,
+		BytesRead:   int64(len(bodyBytes)),
+		Status:      resp.Status,
+		RawResponse: bodyBytes,
+		QueryString: queryInfo["query"],
+	}, nil
 }

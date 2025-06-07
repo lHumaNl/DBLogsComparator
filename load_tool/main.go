@@ -429,7 +429,7 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 
 	// Create query executor for selected system
 	log.Printf("Debug: Creating query executor with system=%s, baseURL=%s", systemForExecutor, baseURL)
-	executor, err := go_querier.CreateQueryExecutor(systemForExecutor, baseURL, options)
+	executor, err := go_querier.CreateQueryExecutor(systemForExecutor, baseURL, options, 1)
 	if err != nil {
 		return fmt.Errorf("error creating query executor: %v", err)
 	}
