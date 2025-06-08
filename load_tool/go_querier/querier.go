@@ -43,6 +43,7 @@ type QueryResult struct {
 	StartTime   time.Time     // Start time of the query
 	EndTime     time.Time     // End time of the query
 	Limit       string        // Limit of the query
+	Step        string        // Step of the query
 }
 
 // QueryExecutor interface for executing queries
@@ -105,16 +106,12 @@ type Worker struct {
 
 // CreateQueryExecutor creates a query executor for the specified system
 func CreateQueryExecutor(mode, baseURL string, options models.Options, workerID int) (models.QueryExecutor, error) {
-	fmt.Printf("Debug: CreateQueryExecutor called with mode=%s, baseURL=%s\n", mode, baseURL)
 	switch mode {
 	case "victoria", "victorialogs":
-		fmt.Println("Debug: Creating VictoriaLogs executor")
 		return executors.NewVictoriaLogsExecutor(baseURL, options, workerID), nil
 	case "es", "elasticsearch", "elk":
-		fmt.Println("Debug: Creating Elasticsearch executor")
 		return executors.NewElasticsearchExecutor(baseURL, options), nil
 	case "loki":
-		fmt.Println("Debug: Creating Loki executor")
 		return executors.NewLokiExecutor(baseURL, options), nil
 	default:
 		return nil, errors.New(fmt.Sprintf("unknown logging system: %s", mode))
@@ -255,9 +252,15 @@ func runWorker(worker Worker) {
 					limitStr = fmt.Sprintf(" limit:%s", result.Limit)
 				}
 
+				// Format step if available
+				stepStr := ""
+				if result.Step != "" {
+					stepStr = fmt.Sprintf(" step:%s", result.Step)
+				}
+
 				// Log with query details
-				fmt.Printf("[Worker %d] Query %s: %s%s%s found %d records, read %d bytes, time %v\n",
-					worker.ID, queryType, result.QueryString, timeRangeStr, limitStr, result.HitCount, result.BytesRead, duration)
+				fmt.Printf("[Worker %d] Query %s: %s%s%s%s found %d records, read %d bytes, time %v\n",
+					worker.ID, queryType, result.QueryString, timeRangeStr, limitStr, stepStr, result.HitCount, result.BytesRead, duration)
 			}
 		} else {
 			// Output error information

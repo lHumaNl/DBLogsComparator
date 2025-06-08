@@ -399,7 +399,6 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 
 // runQuerierWithConfig starts the query client with new configuration from YAML
 func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
-	fmt.Printf("Debug: runQuerierWithConfig called with config.System=%s\n", config.System)
 	log.Printf("Starting query client for system %s\n", config.System)
 
 	// Determine URL for selected system

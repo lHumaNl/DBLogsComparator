@@ -32,6 +32,7 @@ type QueryResult struct {
 	StartTime   time.Time // Query start time range
 	EndTime     time.Time // Query end time range
 	Limit       string    // Query result limit
+	Step        string    // Query step, for range/time series queries
 }
 
 // QueryExecutor interface for executing queries
