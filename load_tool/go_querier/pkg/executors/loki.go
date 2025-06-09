@@ -108,9 +108,9 @@ func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface
 	endTimeStr := common.FormatTimeForLoki(timeRange.End)
 
 	// Set reasonable limits for the query - make limit random
-	limits := []string{"50", "100", "200", "500", "1000"}
+	limits := []string{"10", "50", "100", "200", "500", "1000"}
 	limit := limits[rand.Intn(len(limits))] // Random limit for log queries
-	step := "12s"                           // Default step for metric queries
+	step := "10s"                           // Default step for metric queries
 
 	// Set shorter step for short time ranges
 	rangeDuration := timeRange.End.Sub(timeRange.Start)

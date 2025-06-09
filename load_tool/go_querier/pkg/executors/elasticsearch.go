@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
@@ -58,24 +59,10 @@ type ESErrorResponse struct {
 }
 
 // Constants for ES query generation
-var (
-	// Use common data instead of hardcoded constants
-	esLogTypes = logdata.LogTypes
-	esFields   = []string{
-		"log_type", "host", "container_name", "environment", "datacenter", "timestamp",
-		"level", "message", "remote_addr", "request", "status", "bytes_sent",
-		"http_referer", "http_user_agent", "request_time", "error_code", "service",
-		"exception", "stacktrace", "request_id", "request_path", "client_ip",
-		"trace_id", "span_id", "request_method", "response_status", "response_time",
-		"metric_name", "value", "region", "event_type", "resource_id", "namespace",
-	}
-
-	// Common phrases for keyword search in message field
-	esQueryPhrases = []string{
-		"error", "warning", "exception", "failed", "timeout", "success",
-		"completed", "running", "critical", "forbidden", "GET", "POST", "PUT", "DELETE",
-	}
-)
+var esQueryPhrases = []string{
+	"error", "warning", "exception", "failed", "timeout", "success",
+	"completed", "running", "critical", "forbidden", "GET", "POST", "PUT", "DELETE",
+}
 
 // NewElasticsearchExecutor creates a new query executor for Elasticsearch
 func NewElasticsearchExecutor(baseURL string, options models.Options) *ElasticsearchExecutor {
@@ -134,9 +121,16 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 	startTimeStr := startTime.Format(time.RFC3339)
 	endTimeStr := endTime.Format(time.RFC3339)
 
+	// Set reasonable limits for the query - make limit random
+	limits := []string{"10", "50", "100", "200", "500", "1000"}
+	limit := limits[rand.Intn(len(limits))] // Random limit for log queries
+
+	// Convert limit to int
+	limitInt, _ := strconv.Atoi(limit)
+
 	// Create base query structure with time range filter
 	baseQuery := map[string]interface{}{
-		"size": 100,
+		"size": limitInt,
 		"query": map[string]interface{}{
 			"bool": map[string]interface{}{
 				"filter": []interface{}{
@@ -163,13 +157,13 @@ func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) 
 	case models.ComplexQuery:
 		baseQuery = e.generateComplexQuery(baseQuery, filters)
 	case models.AnalyticalQuery:
-		baseQuery = e.generateAnalyticalQuery(baseQuery, filters)
+		baseQuery = e.generateAnalyticalQuery(baseQuery, filters, limitInt)
 	case models.TimeSeriesQuery:
 		baseQuery = e.generateTimeSeriesQuery(baseQuery, filters)
 	case models.StatQuery:
 		baseQuery = e.generateStatisticalQuery(baseQuery, filters)
 	case models.TopKQuery:
-		baseQuery = e.generateTopKQuery(baseQuery, filters)
+		baseQuery = e.generateTopKQuery(baseQuery, filters, limitInt)
 	}
 
 	return baseQuery
@@ -419,6 +413,8 @@ func (e *ElasticsearchExecutor) executeElasticsearchQuery(ctx context.Context, q
 
 	// Extract query string for logging
 	var queryString string
+
+	// First handle the main query part
 	if qObj, ok := query["query"].(map[string]interface{}); ok {
 		if boolObj, ok := qObj["bool"].(map[string]interface{}); ok {
 			if filters, ok := boolObj["filter"].([]interface{}); ok {
@@ -468,6 +464,45 @@ func (e *ElasticsearchExecutor) executeElasticsearchQuery(ctx context.Context, q
 		if queryString == "" {
 			if qJSON, err := json.Marshal(qObj); err == nil {
 				queryString = string(qJSON)
+			}
+		}
+	}
+
+	// Check if there are aggregations and include them in the query string
+	if aggs, ok := query["aggs"].(map[string]interface{}); ok && len(aggs) > 0 {
+		// Create a composite query representation that includes both the filter and aggregation
+		compositeQuery := make(map[string]interface{})
+
+		// Add the filter part if we have it
+		if queryString != "" {
+			var filterObj map[string]interface{}
+			if err := json.Unmarshal([]byte(queryString), &filterObj); err == nil {
+				// Copy all keys except "bool" to the composite query
+				for k, v := range filterObj {
+					if k != "bool" {
+						compositeQuery[k] = v
+					}
+				}
+			}
+		}
+
+		// Add the aggregation part
+		compositeQuery["aggs"] = aggs
+
+		// Marshal it back to a string
+		if compositeJSON, err := json.Marshal(compositeQuery); err == nil {
+			queryString = string(compositeJSON)
+		}
+	} else if queryString != "" {
+		// Even if there are no aggregations, still filter out the "bool" key
+		var queryObj map[string]interface{}
+		if err := json.Unmarshal([]byte(queryString), &queryObj); err == nil {
+			// Remove the "bool" key if it exists
+			delete(queryObj, "bool")
+
+			// Marshal it back to a string
+			if cleanJSON, err := json.Marshal(queryObj); err == nil && len(queryObj) > 0 {
+				queryString = string(cleanJSON)
 			}
 		}
 	}
@@ -652,7 +687,7 @@ func (e *ElasticsearchExecutor) buildIndexPattern(startTime, endTime time.Time) 
 }
 
 // generateAnalyticalQuery creates an analytical query with aggregations
-func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]interface{}, filters []interface{}) map[string]interface{} {
+func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]interface{}, filters []interface{}, limit int) map[string]interface{} {
 	// Analytical queries with aggregations based on log type
 	logType := logdata.GetRandomLogType()
 
@@ -673,7 +708,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 			aggregations["status_counts"] = map[string]interface{}{
 				"terms": map[string]interface{}{
 					"field": "status",
-					"size":  20,
+					"size":  limit,
 				},
 			}
 		} else {
@@ -681,7 +716,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 			aggregations["bytes_by_status"] = map[string]interface{}{
 				"terms": map[string]interface{}{
 					"field": "status",
-					"size":  20,
+					"size":  limit,
 				},
 				"aggs": map[string]interface{}{
 					"avg_bytes": map[string]interface{}{
@@ -697,7 +732,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 			aggregations["error_code_counts"] = map[string]interface{}{
 				"terms": map[string]interface{}{
 					"field": "error_code",
-					"size":  20,
+					"size":  limit,
 				},
 			}
 		} else {
@@ -705,7 +740,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 			aggregations["level_counts"] = map[string]interface{}{
 				"terms": map[string]interface{}{
 					"field": "level",
-					"size":  5,
+					"size":  limit,
 				},
 			}
 		}
@@ -716,7 +751,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 			aggregations["service_counts"] = map[string]interface{}{
 				"terms": map[string]interface{}{
 					"field": "service",
-					"size":  20,
+					"size":  limit,
 				},
 			}
 		} else {
@@ -724,7 +759,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 			aggregations["level_counts"] = map[string]interface{}{
 				"terms": map[string]interface{}{
 					"field": "level",
-					"size":  5,
+					"size":  limit,
 				},
 			}
 		}
@@ -734,7 +769,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 		aggregations["metric_values"] = map[string]interface{}{
 			"terms": map[string]interface{}{
 				"field": "metric_name",
-				"size":  20,
+				"size":  limit,
 			},
 			"aggs": map[string]interface{}{
 				"avg_value": map[string]interface{}{
@@ -748,7 +783,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 		aggregations["event_type_counts"] = map[string]interface{}{
 			"terms": map[string]interface{}{
 				"field": "event_type",
-				"size":  20,
+				"size":  limit,
 			},
 		}
 
@@ -757,7 +792,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 		aggregations["log_type_counts"] = map[string]interface{}{
 			"terms": map[string]interface{}{
 				"field": "log_type",
-				"size":  10,
+				"size":  limit,
 			},
 		}
 	}
@@ -817,21 +852,110 @@ func (e *ElasticsearchExecutor) generateStatisticalQuery(baseQuery map[string]in
 }
 
 // generateTopKQuery creates a top K query with terms aggregation
-func (e *ElasticsearchExecutor) generateTopKQuery(baseQuery map[string]interface{}, filters []interface{}) map[string]interface{} {
-	// Terms aggregation top 10 services
-	baseQuery["aggs"] = map[string]interface{}{
-		"top_services": map[string]interface{}{
+func (e *ElasticsearchExecutor) generateTopKQuery(baseQuery map[string]interface{}, filters []interface{}, limit int) map[string]interface{} {
+	// Define possible values for k (how many top results) - use the limit parameter instead of hardcoded values
+	topKValues := []int{5, 10, 15, 20, 50, 100, 500, 1000}
+	k := topKValues[rand.Intn(len(topKValues))]
+
+	// Use the larger of the random k value or the limit parameter if it's > 0
+	if limit > 0 && limit > k {
+		k = limit
+	}
+
+	// Available fields for top-K operation - use common logdata definitions
+	availableFields := []string{
+		"service",
+		"level",
+		"method",
+		"status",
+		"log_type",
+		"http_method",
+	}
+
+	// Select a field to get top values for
+	field := availableFields[rand.Intn(len(availableFields))]
+
+	// Make sure we use the keyword type for text fields in Elasticsearch
+	esField := field
+	if field != "level" && field != "status" && field != "log_type" {
+		esField += ".keyword"
+	}
+
+	// Randomly decide if we should add a filter (50% chance)
+	if len(filters) > 0 && rand.Intn(2) == 0 {
+		// Sometimes add an additional filter on a different field (50% chance)
+		filterField := availableFields[rand.Intn(len(availableFields))]
+
+		// Avoid using the same field for filtering and aggregation
+		for filterField == field {
+			filterField = availableFields[rand.Intn(len(availableFields))]
+		}
+
+		// Get filter values based on the field
+		var filterValue string
+		switch filterField {
+		case "service":
+			services := logdata.Services
+			if len(services) > 0 {
+				filterValue = services[rand.Intn(len(services))]
+			}
+		case "level":
+			levels := logdata.LogLevels
+			if len(levels) > 0 {
+				filterValue = levels[rand.Intn(len(levels))]
+			}
+		case "log_type":
+			logTypes := logdata.LogTypes
+			if len(logTypes) > 0 {
+				filterValue = logTypes[rand.Intn(len(logTypes))]
+			}
+		case "status":
+			statuses := logdata.HttpStatusCodes
+			if len(statuses) > 0 {
+				filterValue = fmt.Sprintf("%d", statuses[rand.Intn(len(statuses))])
+			}
+		case "http_method":
+			methods := logdata.HttpMethods
+			if len(methods) > 0 {
+				filterValue = methods[rand.Intn(len(methods))]
+			}
+		}
+
+		if filterValue != "" {
+			// Add field filter to the existing filters
+			esFilterField := filterField
+			if filterField != "level" && filterField != "status" && filterField != "log_type" {
+				esFilterField += ".keyword"
+			}
+
+			termFilter := map[string]interface{}{
+				"term": map[string]interface{}{
+					esFilterField: filterValue,
+				},
+			}
+			filters = append(filters, termFilter)
+		}
+	}
+
+	// Create aggregation for top-K values
+	aggregations := map[string]interface{}{
+		"top_values": map[string]interface{}{
 			"terms": map[string]interface{}{
-				"field": "service.keyword",
-				"size":  10,
+				"field": esField,
+				"order": map[string]interface{}{
+					"_count": "desc",
+				},
+				"size": k,
 			},
 		},
 	}
 
-	baseQuery["size"] = 0
+	// Add aggregation to the query
+	baseQuery["aggs"] = aggregations
 
 	// Update the filters in the base query
 	baseQuery["query"].(map[string]interface{})["bool"].(map[string]interface{})["filter"] = filters
+
 	return baseQuery
 }
 
