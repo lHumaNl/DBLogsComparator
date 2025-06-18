@@ -514,7 +514,7 @@ start_combined() {
         
         echo "Log Combined started natively with PID: $COMBINED_PID"
         # Save PID to file for later stopping
-        echo $COMBINED_PID > ./combined.pid
+        echo $COMBINED_PID > ./load_tool.pid
         cd - > /dev/null
     else
         # Start with Docker

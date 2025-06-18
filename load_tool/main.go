@@ -176,6 +176,12 @@ func main() {
 		StartTime: time.Now(),
 	}
 
+	// Initialize Prometheus metrics if enabled
+	if config.Metrics {
+		common.InitPrometheus(config.Generator.BulkSize)
+		common.StartMetricsServer(config.MetricsPort)
+	}
+
 	// Start required components depending on mode
 	switch config.Mode {
 	case modeGeneratorOnly:
@@ -361,7 +367,7 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 		BulkSize:            cfg.Generator.BulkSize,
 		WorkerCount:         cfg.Generator.WorkerCount,
 		ConnectionCount:     cfg.Generator.ConnectionCount,
-		LogTypeDistribution: cfg.Generator.Distribution,
+		LogTypeDistribution: cfg.Generator.Distribution, // Adding log type distribution from configuration
 		MaxRetries:          cfg.Generator.MaxRetries,
 		RetryDelay:          time.Duration(cfg.Generator.RetryDelayMs) * time.Millisecond,
 		Verbose:             cfg.Generator.Verbose,
@@ -369,10 +375,14 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 		MetricsPort:         cfg.MetricsPort,
 	}
 
+	// Output information about log type distribution
+	fmt.Println("Log type distribution:", generatorConfig.LogTypeDistribution)
+
 	// Enable metrics, if needed
 	if cfg.Metrics {
-		generator.InitPrometheus(generatorConfig)
-		generator.StartMetricsServer(cfg.MetricsPort, generatorConfig)
+		common.InitPrometheus(cfg.Generator.BulkSize)
+		// Removing StartMetricsServer call, as it's already started in main.go
+		// common.StartMetricsServer(cfg.MetricsPort)
 	}
 
 	// Create database client

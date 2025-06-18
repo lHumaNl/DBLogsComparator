@@ -170,8 +170,7 @@ func runWorker(worker Worker) {
 
 		// Increment the total query counter
 		worker.Stats.IncrementTotalQueries()
-		common.IncrementReadRequests()
-		common.OperationCounter.WithLabelValues("query", worker.Executor.GetSystemName()).Inc()
+		common.IncrementReadRequests(worker.Executor.GetSystemName())
 
 		// Create a context with timeout
 		queryCtx, cancel := context.WithTimeout(ctx, worker.Config.QueryTimeout)
@@ -185,19 +184,19 @@ func runWorker(worker Worker) {
 		cancel()
 
 		// Update metrics
-		common.ReadDurationHistogram.Observe(duration.Seconds())
-		common.QueryTypeCounter.WithLabelValues(string(queryType)).Inc()
+		common.ObserveReadDuration(worker.Executor.GetSystemName(), "attempt", duration.Seconds())
+		common.IncrementQueryType(worker.Executor.GetSystemName(), string(queryType))
 
 		// Update counters based on the result
 		if err != nil {
 			worker.Stats.IncrementFailedQueries()
-			common.IncrementFailedRead()
+			common.IncrementFailedRead(worker.Executor.GetSystemName(), "query_error")
 
 			// If the error is not related to timeout or context, retry the query
 			if err != context.DeadlineExceeded && err != context.Canceled {
 				for i := 0; i < worker.Config.MaxRetries; i++ {
 					worker.Stats.IncrementRetriedQueries()
-					common.ReadRequestsRetried.Inc()
+					common.IncrementReadRequests(worker.Executor.GetSystemName())
 
 					time.Sleep(worker.Config.RetryDelay())
 
@@ -213,7 +212,7 @@ func runWorker(worker Worker) {
 					retryCancel()
 
 					// Update metrics
-					common.ReadDurationHistogram.Observe(retryDuration.Seconds())
+					common.ObserveReadDuration(worker.Executor.GetSystemName(), "retry", retryDuration.Seconds())
 
 					// If the query is successful, break the retry loop
 					if err == nil {
@@ -226,15 +225,15 @@ func runWorker(worker Worker) {
 		// If the query is ultimately successful, update counters
 		if err == nil {
 			worker.Stats.IncrementSuccessfulQueries()
-			common.IncrementSuccessfulRead()
+			common.IncrementSuccessfulRead(worker.Executor.GetSystemName())
 
 			// Update statistics based on results
 			worker.Stats.AddHits(result.HitCount)
 			worker.Stats.AddBytesRead(result.BytesRead)
 
 			// Update Prometheus metrics
-			common.ResultHitsHistogram.Observe(float64(result.HitCount))
-			common.ResultSizeHistogram.Observe(float64(result.BytesRead))
+			common.ResultHitsHistogram.WithLabelValues(worker.Executor.GetSystemName()).Observe(float64(result.HitCount))
+			common.ResultSizeHistogram.WithLabelValues(worker.Executor.GetSystemName()).Observe(float64(result.BytesRead))
 
 			// Output query information if verbose mode is enabled
 			if worker.Config.Verbose {
@@ -526,10 +525,10 @@ func main() {
 // parseNanosecondTime attempts to parse a string as a nanosecond timestamp
 // Returns the time or an error
 func parseNanosecondTime(timeStr string) (time.Time, error) {
-	// Try to parse as nanoseconds (Loki uses nanosecond timestamps)
+	// Try to convert to int64 nanoseconds
 	ns, err := strconv.ParseInt(timeStr, 10, 64)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, fmt.Errorf("failed to parse timestamp: %v", err)
 	}
 	return time.Unix(0, ns), nil
 }

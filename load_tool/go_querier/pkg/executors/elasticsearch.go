@@ -93,7 +93,7 @@ func NewElasticsearchExecutor(baseURL string, options models.Options) *Elasticse
 
 // GetSystemName returns the system name
 func (e *ElasticsearchExecutor) GetSystemName() string {
-	return "elasticsearch"
+	return "Elasticsearch"
 }
 
 // ExecuteQuery executes a query of the specified type in Elasticsearch

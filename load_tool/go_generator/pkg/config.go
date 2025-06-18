@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,8 @@ type Stats struct {
 	SuccessfulRequests int64
 	FailedRequests     int64
 	TotalLogs          int64
+	LogsByType         map[string]int64
+	LogsByTypeMutex    sync.RWMutex // Mutex to protect the LogsByType map
 	RetriedRequests    int64
 	StartTime          time.Time
 }
