@@ -29,7 +29,7 @@ datasources:
     uid: elasticsearch
     access: proxy
     url: http://elasticsearch:9200
-    database: "[logs-]YYYY.MM.DD"
+    database: "[logs*]"
     jsonData:
       timeField: "@timestamp"
       esVersion: "7.10.0"

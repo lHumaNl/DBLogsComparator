@@ -2,6 +2,28 @@
 
 set -e
 
+# Function to determine which docker-compose command to use
+setup_compose_command() {
+    if command -v docker-compose &> /dev/null; then
+        COMPOSE_CMD="docker-compose"
+    elif command -v docker &> /dev/null && docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    else
+        echo "Error: Neither 'docker-compose' nor 'docker compose' is available."
+        echo "Please install Docker and Docker Compose to continue."
+        exit 1
+    fi
+}
+
+# Function to ensure the monitoring network exists
+ensure_monitoring_network() {
+    if ! docker network inspect monitoring-network >/dev/null 2>&1; then
+        echo "Network 'monitoring-network' not found. Creating it..."
+        docker network create monitoring-network
+        echo "Network 'monitoring-network' created successfully."
+    fi
+}
+
 # Help function
 show_help() {
     echo "Usage: $0 <log_system> [options]"
@@ -61,7 +83,7 @@ start_monitoring() {
     
     # Start the monitoring stack (Grafana, VictoriaMetrics)
     cd monitoring
-    docker-compose up -d
+    $COMPOSE_CMD up -d
     cd - > /dev/null
     
     # Check that monitoring components are healthy
@@ -89,7 +111,7 @@ stop_monitoring() {
     
     # Stop the monitoring stack
     cd monitoring
-    docker-compose down
+    $COMPOSE_CMD down
     cd - > /dev/null
     
     echo "Monitoring system stopped successfully!"
@@ -106,7 +128,7 @@ start_elk() {
     
     # Start the ELK stack
     cd elk
-    docker-compose up -d
+    $COMPOSE_CMD up -d
     cd - > /dev/null
     
     # Check that ELK components are healthy
@@ -134,7 +156,7 @@ stop_elk() {
     
     # Stop the ELK stack
     cd elk
-    docker-compose down
+    $COMPOSE_CMD down
     cd - > /dev/null
     
     echo "ELK Stack stopped successfully!"
@@ -151,7 +173,7 @@ start_loki() {
     
     # Start Loki
     cd loki
-    docker-compose up -d
+    $COMPOSE_CMD up -d
     cd - > /dev/null
     
     # Check that Loki is healthy
@@ -178,7 +200,7 @@ stop_loki() {
     
     # Stop Loki
     cd loki
-    docker-compose down
+    $COMPOSE_CMD down
     cd - > /dev/null
     
     echo "Loki stopped successfully!"
@@ -195,7 +217,7 @@ start_victorialogs() {
     
     # Start VictoriaLogs
     cd victorialogs
-    docker-compose up -d
+    $COMPOSE_CMD up -d
     cd - > /dev/null
     
     # Check that VictoriaLogs is healthy
@@ -222,7 +244,7 @@ stop_victorialogs() {
     
     # Stop VictoriaLogs
     cd victorialogs
-    docker-compose down
+    $COMPOSE_CMD down
     cd - > /dev/null
     
     echo "VictoriaLogs stopped successfully!"
@@ -250,7 +272,7 @@ stop_generator() {
         cd load_tool
         if [ -f "docker-compose.yml" ]; then
             echo "Attempting to stop Docker-based generator..."
-            docker-compose down
+            $COMPOSE_CMD down
             echo "Docker-based log generator stopped!"
         else
             echo "Note: docker-compose.yml not found in load_tool directory"
@@ -353,13 +375,13 @@ start_generator() {
         
         # First stop previous generator instances to avoid conflicts
         echo "Stopping previous instances of log generator..."
-        docker-compose down
+        $COMPOSE_CMD down
         
         # Override environment variables for docker-compose
         # Pass the selected logging system and mode through variables
         # Add --build flag for automatic image rebuild when changes occur
         echo "Starting log generator with updated image..."
-        SYSTEM=$SYSTEM_ARG MODE="generator" docker-compose up -d --build
+        SYSTEM=$SYSTEM_ARG MODE="generator" $COMPOSE_CMD up -d --build
         echo "Log Generator started with Docker"
         cd - > /dev/null
     fi
@@ -439,11 +461,11 @@ start_querier() {
         
         # First stop any previous instances
         echo "Stopping previous instances of log querier..."
-        docker-compose down
+        $COMPOSE_CMD down
         
         # Override environment variables for docker-compose
         echo "Starting log querier with updated image..."
-        SYSTEM=$SYSTEM_ARG MODE="querier" docker-compose up -d --build
+        SYSTEM=$SYSTEM_ARG MODE="querier" $COMPOSE_CMD up -d --build
         echo "Log Querier started with Docker"
         cd - > /dev/null
     fi
@@ -523,11 +545,11 @@ start_combined() {
         
         # First stop any previous instances
         echo "Stopping previous instances of log combined..."
-        docker-compose down
+        $COMPOSE_CMD down
         
         # Override environment variables for docker-compose
         echo "Starting log combined with updated image..."
-        SYSTEM=$SYSTEM_ARG MODE="combined" docker-compose up -d --build
+        SYSTEM=$SYSTEM_ARG MODE="combined" $COMPOSE_CMD up -d --build
         echo "Log Combined started with Docker"
         cd - > /dev/null
     fi
@@ -567,6 +589,12 @@ stop_all() {
 if [ $# -lt 1 ]; then
     show_help
 fi
+
+# Setup docker-compose command
+setup_compose_command
+
+# Ensure the monitoring network exists before we do anything else
+ensure_monitoring_network
 
 # Parse arguments
 DB_SYSTEM=""

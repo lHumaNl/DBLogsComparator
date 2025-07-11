@@ -149,12 +149,13 @@ check_metrics_in_vm() {
     local retry_delay=${5:-15}  # Default to 15 seconds delay if not specified
     local attempt=1
     local success=false
-    
+
     # Check if VictoriaMetrics is available
     if is_victoria_metrics_available; then
         # VictoriaMetrics is available, check metrics through it
+        echo -e "Checking metric $metric_name in ${description} on ${direct_url}"
         while [ $attempt -le $max_attempts ] && [ "$success" = false ]; do
-            if curl -s "http://localhost:${VICTORIA_METRICS_PORT}/api/v1/series?match[]=$metric_name" | grep -q "$metric_name"; then
+            if curl -s "${direct_url}" | grep -q "$metric_name"; then
                 success=true
                 break
             else
@@ -234,7 +235,7 @@ check_monitoring() {
     check_url "http://localhost:${GRAFANA_PORT}/api/health" "Grafana HTTP is accessible" "Grafana HTTP is not accessible" || ((errors++))
     
     # Check VictoriaMetrics' own metrics
-    check_metrics_in_vm "vm_app_version" "VictoriaMetrics exports its own metrics" || ((errors++))
+    check_metrics_in_vm "vm_app_version" "VictoriaMetrics exports its own metrics" "http://localhost:${VICTORIA_METRICS_PORT}/metrics" || ((errors++))
     
     if [ $errors -eq 0 ]; then
         echo -e "\n${GREEN}Monitoring system is working correctly!${NC}"

@@ -24,6 +24,8 @@ services:
       - "--storageDataPath=/victoria-metrics-data"
     networks:
       - monitoring-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8428/-/healthy" ]
       interval: 30s
