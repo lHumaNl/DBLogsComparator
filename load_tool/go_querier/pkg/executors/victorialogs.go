@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
@@ -62,7 +63,7 @@ func extractCountAlias(query string) string {
 type VictoriaLogsExecutor struct {
 	BaseURL            string
 	SearchPath         string
-	Client             *http.Client
+	ClientPool         *pkg.ClientPool // Use pool instead of single client
 	Options            models.Options
 	availableLabels    []string
 	timeRangeGenerator *common.TimeRangeGenerator
@@ -121,10 +122,13 @@ func NewVictoriaLogsExecutor(baseURL string, options models.Options, workerID in
 		labelCache[label] = values
 	}
 
+	// Create HTTP client pool with dynamic connection count
+	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
+
 	return &VictoriaLogsExecutor{
 		BaseURL:            baseURL,
 		SearchPath:         searchPath,
-		Client:             &http.Client{Timeout: options.Timeout},
+		ClientPool:         clientPool,
 		Options:            options,
 		availableLabels:    availableLabels,
 		timeRangeGenerator: common.NewTimeRangeGenerator(),
@@ -300,7 +304,8 @@ func (e *VictoriaLogsExecutor) executeVictoriaLogsQuery(queryInfo map[string]str
 	}
 	req.URL.RawQuery = q.Encode()
 
-	resp, err := e.Client.Do(req)
+	client := e.ClientPool.Get()
+	resp, err := client.Do(req)
 	if err != nil {
 		return models.QueryResult{}, fmt.Errorf("error executing request: %w", err)
 	}
@@ -552,6 +557,25 @@ func (e *VictoriaLogsExecutor) generateAnalyticalQuery() string {
 
 	groupByField := allFieldKeys[rand.Intn(len(allFieldKeys))]
 
+	// 40% chance to use quantile aggregation for analytical queries
+	if rand.Intn(10) < 4 {
+		numericFields := []string{"response_time", "latency", "duration", "bytes", "cpu", "memory"}
+		field := numericFields[rand.Intn(len(numericFields))]
+
+		// Multiple unique quantiles for analytical queries
+		numQuantiles := rand.Intn(3) + 1 // 1-3 quantiles
+		uniqueQuantiles := common.GetUniqueRandomQuantileStrings(numQuantiles)
+		quantilesParts := make([]string, len(uniqueQuantiles))
+		for i, q := range uniqueQuantiles {
+			aliasNum := strings.Replace(q, "0.", "", 1)
+			quantilesParts[i] = fmt.Sprintf("quantile(%s, %s) as p%s_%s", q, field, aliasNum, field)
+		}
+
+		query := fmt.Sprintf(`%s:"%s" | stats by (%s) %s`,
+			fieldName, fieldValue, groupByField, strings.Join(quantilesParts, ", "))
+		return query
+	}
+
 	query := fmt.Sprintf(`%s:"%s" | stats by (%s) count(*) as log_count`, fieldName, fieldValue, groupByField)
 	return query
 }
@@ -618,6 +642,20 @@ func (e *VictoriaLogsExecutor) generateStatQuery() string {
 	filterValue := filterValues[rand.Intn(len(filterValues))]
 
 	groupByField := allFieldKeys[rand.Intn(len(allFieldKeys))]
+
+	// 30% chance to use quantile instead of count
+	if rand.Intn(10) < 3 {
+		numericFields := []string{"response_time", "latency", "duration", "bytes", "cpu", "memory"}
+		field := numericFields[rand.Intn(len(numericFields))]
+		quantile := common.GetRandomQuantile()
+
+		// Remove the "0." prefix for alias (e.g., "0.95" -> "95")
+		aliasNum := strings.Replace(quantile, "0.", "", 1)
+
+		query := fmt.Sprintf(`%s:"%s" | stats by (%s) quantile(%s, %s) as p%s_%s`,
+			filterField, filterValue, groupByField, quantile, field, aliasNum, field)
+		return query
+	}
 
 	query := fmt.Sprintf(`%s:"%s" | stats by (%s) count(*) as log_count`, filterField, filterValue, groupByField)
 	return query

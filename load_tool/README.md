@@ -1,265 +1,309 @@
-# Log Generator and Querier Tool (load_tool)
+# Load Testing Tool for Log Storage Systems
 
-This directory contains a versatile Go-based tool that serves as both a log generator and a query tool for the
-DBLogsComparator project. It provides a unified platform for log generation, querying, and benchmarking across multiple
-log storage systems.
+A comprehensive Go-based tool for load testing and performance benchmarking of log storage systems. Supports log
+generation, querying, and combined testing scenarios with built-in Prometheus metrics.
 
-## Operational Modes
+## Architecture Overview
 
-The tool operates in three distinct modes:
+This tool provides three main components:
 
-### 1. Generator Mode
+### 1. Generator (`go_generator/`)
 
-Generates synthetic logs and sends them to the specified log system:
+Generates synthetic logs and sends them to log systems:
 
-- Configurable throughput (requests per second - RPS)
-- Customizable log type distribution
-- Bulk sending capabilities
-- Retry mechanism with exponential backoff
+- Supports bulk operations with configurable batch sizes
+- Uses CPU-based worker allocation (`runtime.NumCPU() * 4`)
+- Implements retry logic with exponential backoff
+- Supports multiple log types with configurable distribution
 
-### 2. Querier Mode
+### 2. Querier (`go_querier/`)
 
-Executes predefined queries against log systems to measure query performance:
+Executes queries against log systems to measure performance:
 
-- Customizable query patterns
-- Measurement of query latency and throughput
-- Support for various query types (range, filter, aggregate)
-- Parallel query execution
+- Supports various query types (simple, complex, analytical, timeseries, stat, topk)
+- Measures query latency, throughput, and result sizes
+- Configurable concurrency and query timeout
 
-### 3. Combined Mode
+### 3. Common (`common/`)
 
-Runs both generator and querier simultaneously to test under load:
+Shared configuration, metrics, and utilities:
 
-- Evaluates query performance while system is receiving logs
-- Realistic load testing scenario
-- Performance correlation between ingest and query operations
+- YAML-based configuration system
+- Prometheus metrics integration with `dblogscomp_` prefix
+- Load test logging and reporting
 
 ## Supported Log Systems
 
-The tool supports multiple log storage backends:
-
-- **Elasticsearch/ELK** (`elasticsearch` or `es`): Supports both parameter names for compatibility
 - **Loki**: Grafana Loki with structured metadata
-- **VictoriaLogs** (`victoria`): VictoriaMetrics log storage system
+- **Elasticsearch**: Full-text search and analytics (use `elasticsearch` parameter)
+- **VictoriaLogs**: VictoriaMetrics log storage system (use `victorialogs` parameter)
+
+## Operation Modes
+
+- `generator`: Log generation only
+- `querier`: Query execution only
+- `combined`: Both generation and querying simultaneously
+
+## Load Testing Modes
+
+- `stability`: Constant load testing
+- `maxPerf`: Step-by-step RPS increase to find performance limits
 
 ## Configuration
 
-### Command Line Parameters
+The tool uses YAML configuration with two main files:
 
+### Main Configuration (`config.yaml`)
+
+```yaml
+metrics: true
+
+generator:
+  maxPerf:
+    steps: 3
+    stepDuration: 10
+    impact: 2
+    baseRPS: 10
+    startPercent: 10
+    incrementPercent: 10
+
+  stability:
+    stepDuration: 60
+    impact: 5
+    baseRPS: 10
+    stepPercent: 100
+
+  bulkSize: 10
+  maxRetries: 3
+  retryDelayMs: 500
+  timeoutMs: 5000
+
+  verbose: false
+
+  distribution:
+    web_access: 60
+    web_error: 10
+    application: 20
+    event: 5
+    metric: 5
+
+querier:
+  maxPerf:
+    steps: 3
+    stepDuration: 10
+    impact: 2
+    baseRPS: 10
+    startPercent: 10
+    incrementPercent: 10
+
+  stability:
+    stepDuration: 60
+    impact: 5
+    baseRPS: 10
+    stepPercent: 100
+
+  maxRetries: 3
+  retryDelayMs: 500
+  timeoutMs: 30000
+
+  verbose: false
+
+  distribution:
+    simple: 20
+    complex: 20
+    analytical: 15
+    timeseries: 15
+    stat: 15
+    topk: 15
 ```
-Usage:
-  load_tool [flags]
 
-Flags:
-  -config string
-        Path to configuration file YAML (default "config.yaml")
-  -hosts string
-        Path to hosts file with log system URLs (default "db_hosts.yaml")
-  -mode string
-        Operation mode: generator, querier, combined (default "generator")
-  -system string
-        Log system type: loki, elasticsearch/es, victoria
-  -metrics-port int
-        Prometheus metrics port (default 9090)
-```
-
-### YAML Configuration
-
-The tool uses two main configuration files:
-
-1. **config.yaml**: General settings
-   ```yaml
-   generator:
-     rps: 100
-     duration: 1h
-     bulk_size: 10
-     workers: 4
-     connections: 10
-     max_retries: 3
-     retry_delay: 1s
-     log_distribution:
-       web_access: 40
-       web_error: 10
-       application: 30
-       metric: 10
-       event: 10
-   
-   querier:
-     queries_per_second: 10
-     duration: 1h
-     concurrency: 4
-     query_types:
-       range: 30
-       filter: 40
-       aggregate: 30
-   ```
-
-2. **db_hosts.yaml**: Backend-specific endpoints
+**db_hosts.yaml**: Backend-specific endpoints
    ```yaml
    urlLoki: http://localhost:3100
    urlES: http://localhost:9200
    urlVictoria: http://localhost:9428
    ```
 
-## Running the Tool
-
-### Docker Usage
-
-To run the tool using Docker:
+## Build and Development Commands
 
 ```bash
-# Set environment variables and start the container
-SYSTEM=loki MODE=generator docker-compose up -d
-
-# For querier mode
-SYSTEM=elasticsearch MODE=querier docker-compose up -d
-
-# For combined mode
-SYSTEM=victoria MODE=combined docker-compose up -d
-```
-
-To stop the tool:
-
-```bash
-docker-compose down
-```
-
-### Native Usage
-
-For development or performance testing, you can run the tool natively:
-
-```bash
-# Build the tool
+# Build the load_tool binary
 go build -o load_tool
 
-# Run in generator mode
-./load_tool -system loki -mode generator
+# Run tests
+go test ./...
 
-# Run in querier mode
-./load_tool -system elasticsearch -mode querier
+# Run with Go directly (development)
+go run main.go -system loki -mode generator
 
-# Run in combined mode
-./load_tool -system victoria -mode combined
+# Build for Docker
+docker build -t load_tool .
+
+# Run with Docker Compose
+SYSTEM=loki MODE=generator docker-compose up -d
 ```
 
-## Log Types and Structure
+## Usage Examples
 
-The generator creates various log types to simulate real-world scenarios:
+### Command Line
 
-1. **Web Access Logs**: HTTP access logs with client IP, method, path, status code, and response time
-2. **Web Error Logs**: Application errors with stack traces and error codes
-3. **Application Logs**: General application logs with different severity levels
-4. **Metric Logs**: Numerical metrics with dimensions
-5. **Event Logs**: Discrete events with timestamps and metadata
+```bash
+# Generator mode
+./load_tool -system loki -mode generator
 
-All logs follow a consistent JSON structure with common fields and type-specific fields.
+# Querier mode  
+./load_tool -system elasticsearch -mode querier
 
-## Metrics
+# Combined mode
+./load_tool -system victorialogs -mode combined
 
-The tool exposes Prometheus metrics on the configured port (default: 9090):
+# With custom config
+./load_tool -config custom-config.yaml -hosts custom-hosts.yaml
+```
 
-### Generator Metrics
+### Docker Compose
 
-- Logs generated per second
-- Request durations by log system
-- Error rates and retry counts
-- Log type distribution
+```bash
+# Generator
+SYSTEM=loki MODE=generator docker-compose up -d
 
-### Querier Metrics
+# Querier
+SYSTEM=elasticsearch MODE=querier docker-compose up -d
 
-- Queries per second
-- Query latency (min, max, avg, percentiles)
-- Query errors by type
-- Response size distribution
+# Combined
+SYSTEM=victorialogs MODE=combined docker-compose up -d
+```
 
-## Integration with Monitoring
+## Log Types Generated
 
-The tool is integrated with the centralized monitoring system through the `monitoring-network` Docker network. All
-metrics are scraped by VictoriaMetrics and visualized in dedicated Grafana dashboards.
+1. **Web Access Logs** (60%): HTTP requests with IP, method, path, status, response time
+2. **Web Error Logs** (12%): Application errors with stack traces and error codes
+3. **Application Logs** (20%): General application logs with severity levels
+4. **Metric Logs** (5%): Numerical metrics with dimensions
+5. **Event Logs** (3%): Discrete events with timestamps and metadata
 
-## Detailed Prometheus Metrics Reference
+## Prometheus Metrics
 
-The load_tool exposes comprehensive metrics with the `dblogscomp_` prefix on port 9090. These metrics are designed to
-monitor and analyze the performance of both the generator and querier components across different log systems.
+All metrics use the `dblogscomp_` prefix and are exposed on the configured port (default: 9090).
 
 ### Write Operation Metrics
 
-| Metric Name                                       | Type      | Labels                    | Description                                        |
-|---------------------------------------------------|-----------|---------------------------|----------------------------------------------------|
-| `dblogscomp_write_requests_total`                 | Counter   | `system`                  | Total number of write requests sent to log systems |
-| `dblogscomp_write_requests_success`               | Counter   | `system`                  | Count of successful write requests                 |
-| `dblogscomp_write_requests_failure`               | Counter   | `system`, `error_type`    | Count of failed write requests by error type       |
-| `dblogscomp_write_requests_retried`               | Counter   | `system`, `retry_attempt` | Number of retried write requests by attempt number |
-| `dblogscomp_write_duration_seconds`               | Histogram | `system`, `status`        | Write request duration histogram (seconds)         |
-| `dblogscomp_generator_logs_sent_total`            | Counter   | `log_type`, `system`      | Total number of logs sent by type and system       |
-| `dblogscomp_generator_batch_size`                 | Gauge     | -                         | Current batch size used by the generator           |
-| `dblogscomp_generator_throughput_logs_per_second` | Gauge     | `system`, `log_type`      | Current throughput of the generator (logs/sec)     |
+| Metric                                            | Type      | Labels                             | Description                                 |
+|---------------------------------------------------|-----------|------------------------------------|---------------------------------------------|
+| `dblogscomp_write_requests_total`                 | Counter   | `system`                           | Total write requests                        |
+| `dblogscomp_write_requests_success`               | Counter   | `system`, `log_type`               | Successful write requests by log type       |
+| `dblogscomp_write_requests_failure`               | Counter   | `system`, `log_type`, `error_type` | Failed write requests by log and error type |
+| `dblogscomp_write_duration_seconds`               | Histogram | `system`, `status`                 | Write request duration                      |
+| `dblogscomp_generator_logs_sent_total`            | Counter   | `log_type`, `system`               | Total logs sent by type                     |
+| `dblogscomp_generator_batch_size`                 | Gauge     | `system`                           | Current batch size                          |
+| `dblogscomp_generator_throughput_logs_per_second` | Gauge     | `system`, `log_type`               | Generator throughput                        |
 
 ### Read Operation Metrics
 
-| Metric Name                             | Type      | Labels                         | Description                                            |
-|-----------------------------------------|-----------|--------------------------------|--------------------------------------------------------|
-| `dblogscomp_read_requests_total`        | Counter   | `system`                       | Total number of read/query requests                    |
-| `dblogscomp_read_requests_success`      | Counter   | `system`                       | Count of successful read requests                      |
-| `dblogscomp_read_requests_failure`      | Counter   | `system`, `error_type`         | Count of failed read requests by error type            |
-| `dblogscomp_read_requests_retried`      | Counter   | `system`, `retry_attempt`      | Number of retried read requests by attempt number      |
-| `dblogscomp_read_duration_seconds`      | Histogram | `system`, `status`             | Read/query duration histogram (seconds)                |
-| `dblogscomp_querier_query_type_total`   | Counter   | `type`, `system`               | Count of queries by query type (simple, complex, etc.) |
-| `dblogscomp_querier_failed_query_types` | Counter   | `type`, `system`, `error_type` | Count of failed queries by type and error              |
+| Metric                                 | Type      | Labels                               | Description                                  |
+|----------------------------------------|-----------|--------------------------------------|----------------------------------------------|
+| `dblogscomp_read_requests_total`       | Counter   | `system`                             | Total read requests                          |
+| `dblogscomp_read_requests_success`     | Counter   | `system`, `query_type`               | Successful read requests by query type       |
+| `dblogscomp_read_requests_failure`     | Counter   | `system`, `query_type`, `error_type` | Failed read requests by query and error type |
+| `dblogscomp_read_duration_seconds`     | Histogram | `system`, `status`                   | Read request duration                        |
+| `dblogscomp_querier_query_type_total`  | Counter   | `type`, `system`                     | Queries by type                              |
+| `dblogscomp_querier_result_hits`       | Histogram | `system`, `type`                     | Query result hit counts                      |
+| `dblogscomp_querier_result_size_bytes` | Histogram | `system`, `type`                     | Query result sizes                           |
 
-### Performance and Response Metrics
+### System Metrics
 
-| Metric Name                            | Type      | Labels                     | Description                                     |
-|----------------------------------------|-----------|----------------------------|-------------------------------------------------|
-| `dblogscomp_querier_result_size_bytes` | Histogram | `system`                   | Size of query results in bytes                  |
-| `dblogscomp_querier_result_hits`       | Histogram | `system`                   | Number of records/documents returned by queries |
-| `dblogscomp_current_rps`               | Gauge     | `component`                | Current rate of requests per second             |
-| `dblogscomp_system_latency_seconds`    | Histogram | `system`, `operation_type` | System latency comparison histogram             |
+| Metric                              | Type      | Labels                              | Description                  |
+|-------------------------------------|-----------|-------------------------------------|------------------------------|
+| `dblogscomp_current_rps`            | Gauge     | `component`, `system`               | Current requests per second  |
+| `dblogscomp_system_latency_seconds` | Histogram | `system`, `operation_type`          | System latency comparison    |
+| `dblogscomp_operations_total`       | Counter   | `type`, `system`                    | Total operations by type     |
+| `dblogscomp_error_total`            | Counter   | `error_type`, `operation`, `system` | Errors by type and operation |
 
-### Error and System Metrics
+## Key Design Patterns
 
-| Metric Name                    | Type    | Labels                              | Description                                              |
-|--------------------------------|---------|-------------------------------------|----------------------------------------------------------|
-| `dblogscomp_error_total`       | Counter | `error_type`, `operation`, `system` | Total errors by type, operation, and system              |
-| `dblogscomp_connection_errors` | Counter | `system`, `error_type`              | Connection errors by system and error type               |
-| `dblogscomp_operations_total`  | Counter | `type`, `system`                    | Total operations by type and system                      |
-| `dblogscomp_resource_usage`    | Gauge   | `resource_type`                     | Resource usage during test execution (CPU, memory, etc.) |
+### Dynamic Worker Allocation
 
-### Using Metrics for Analysis
+Workers are allocated based on CPU count rather than fixed configuration:
 
-These metrics can be used to:
+```go
+defaultWorkers := runtime.NumCPU() * 4
+```
 
-1. **Compare System Performance**
-    - Use `dblogscomp_system_latency_seconds` to directly compare latency across systems
-    - Analyze `dblogscomp_write_duration_seconds` and `dblogscomp_read_duration_seconds` to compare write and read
-      performance
+### Retry Logic
 
-2. **Identify Bottlenecks**
-    - Monitor `dblogscomp_resource_usage` to detect resource constraints
-    - Track `dblogscomp_error_total` to identify recurring issues
+All components implement retry logic with configurable delays and max attempts.
 
-3. **Tune Performance**
-    - Analyze the impact of batch size changes using `dblogscomp_generator_batch_size` and throughput metrics
-    - Optimize query performance by monitoring `dblogscomp_querier_result_size_bytes` and latency metrics
+### Metrics Integration
 
-4. **Validate Test Scenarios**
-    - Ensure expected log distribution using `dblogscomp_generator_logs_sent_total`
-    - Verify query distribution with `dblogscomp_querier_query_type_total`
+Comprehensive Prometheus metrics with consistent `dblogscomp_` prefix for monitoring performance across all systems.
 
-Metrics are automatically collected by VictoriaMetrics and can be visualized through the integrated Grafana dashboards.
+### Context-Based Cancellation
+
+Uses Go contexts for graceful shutdown in combined mode operations.
+
+### Verbose Output Control
+
+- `verbose: true`: Shows detailed configuration, real-time stats, and comprehensive logging
+- `verbose: false`: Shows only errors and final results (like querier behavior)
 
 ## Performance Tuning
 
-For optimal performance:
+### Generator Optimization
 
-- Adjust `bulk_size` to balance throughput and memory usage
-- Set `workers` based on available CPU cores
-- Configure `connections` according to network capabilities
-- For query performance, tune `concurrency` based on system resources
+- **Bulk Size**: Balance throughput vs memory usage (default: 10)
+- **Workers**: Automatically set to `CPU cores * 4`
+- **Connections**: Configure based on network capacity
+- **RPS**: Adjust based on target load
+
+### Querier Optimization
+
+- **Concurrency**: Match to available CPU cores
+- **Query Timeout**: Adjust based on query complexity
+- **Query Distribution**: Balance query types for realistic testing
+
+### System-Specific Notes
+
+- **Elasticsearch**: Supports both bulk and single document operations
+- **Loki**: Uses structured metadata for efficient querying
+- **VictoriaLogs**: Optimized for high-volume log ingestion
 
 ## Troubleshooting
 
-- **Connection issues**: Ensure network connectivity between services
-- **Performance problems**: Adjust worker count, connections, and bulk size
-- **Query timeout errors**: Increase timeout settings or reduce query complexity
-- **Metric collection issues**: Verify the tool is connected to the monitoring network
+### Common Issues
+
+1. **Connection Errors**: Verify database URLs in `db_hosts.yaml`
+2. **Memory Issues**: Reduce bulk size or worker count
+3. **Timeout Errors**: Increase query timeout or reduce complexity
+4. **Metric Collection**: Ensure metrics port is accessible
+
+### Debug Mode
+
+Enable verbose logging for detailed troubleshooting:
+
+```yaml
+verbose: true
+```
+
+### Log Analysis
+
+- Check error patterns in failed requests
+- Monitor backpressure events for system overload
+- Analyze query latency distributions
+
+## Integration with Monitoring
+
+The tool integrates with centralized monitoring through:
+
+- VictoriaMetrics for metric collection
+- Grafana dashboards for visualization
+- Docker network (`monitoring-network`) for service discovery
+
+All metrics are automatically scraped and available in the monitoring dashboard.
+
+## Development Notes
+
+- Error handling is comprehensive with detailed error messages
+- Logging uses structured logging with configurable verbosity
+- All timeouts and retry configurations are externalized to YAML
+- Docker support with multi-stage builds for production deployment
+- System labels are normalized to lowercase for consistent Grafana visualization

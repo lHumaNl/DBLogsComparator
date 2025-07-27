@@ -18,9 +18,6 @@ func main() {
 	// Set maximum number of processors
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	// Initialize random number generator
-	rand.Seed(time.Now().UnixNano())
-
 	// Determine optimal number of workers
 	// By default - number of available CPUs * 2
 	cpuCount := runtime.NumCPU()
@@ -40,7 +37,7 @@ func main() {
 	rps := flag.Int("rps", 10, "Requests per second")
 	duration := flag.Duration("duration", 1*time.Minute, "Test duration")
 	bulkSize := flag.Int("bulk-size", 100, "Number of logs in one request")
-	workerCount := flag.Int("worker-count", defaultWorkers, "Number of worker goroutines")
+	// workerCount flag removed - using runtime.NumCPU() * 4
 	connectionCount := flag.Int("connection-count", 10, "Number of HTTP connections")
 
 	// Log type distribution
@@ -70,14 +67,14 @@ func main() {
 
 	// Create configuration
 	config := pkg.Config{
-		Mode:                *mode,
-		BaseURL:             *baseURL,
-		URL:                 *baseURL,
-		RPS:                 *rps,
-		Duration:            *duration,
-		BulkSize:            *bulkSize,
-		WorkerCount:         *workerCount,
-		ConnectionCount:     *connectionCount,
+		Mode:     *mode,
+		BaseURL:  *baseURL,
+		URL:      *baseURL,
+		RPS:      *rps,
+		Duration: *duration,
+		BulkSize: *bulkSize,
+		// WorkerCount removed - using CPU-based allocation
+		// ConnectionCount removed - using dynamic CPU-based allocation
 		LogTypeDistribution: logTypeDistribution,
 		Verbose:             *verbose,
 		MaxRetries:          *maxRetries,
@@ -87,22 +84,24 @@ func main() {
 	}
 
 	// Output configuration information
-	fmt.Printf("=== Log Generator ===\n")
-	fmt.Printf("Mode: %s\n", config.Mode)
-	fmt.Printf("URL: %s\n", config.URL)
-	fmt.Printf("RPS: %d\n", config.RPS)
-	fmt.Printf("Duration: %s\n", config.Duration)
-	fmt.Printf("Bulk size: %d\n", config.BulkSize)
-	fmt.Printf("Worker goroutines: %d\n", config.WorkerCount)
-	fmt.Printf("HTTP connections: %d\n", config.ConnectionCount)
-	fmt.Printf("Log type distribution: %v\n", config.LogTypeDistribution)
-	fmt.Printf("Retry attempts: %d\n", config.MaxRetries)
-	fmt.Printf("Retry delay: %s\n", config.RetryDelay)
-	fmt.Printf("Prometheus metrics: %v\n", config.EnableMetrics)
-	if config.EnableMetrics {
-		fmt.Printf("Metrics port: %d\n", config.MetricsPort)
+	if config.Verbose {
+		fmt.Printf("=== Log Generator ===\n")
+		fmt.Printf("Mode: %s\n", config.Mode)
+		fmt.Printf("URL: %s\n", config.URL)
+		fmt.Printf("RPS: %d\n", config.RPS)
+		fmt.Printf("Duration: %s\n", config.Duration)
+		fmt.Printf("Bulk size: %d\n", config.BulkSize)
+		// Worker count info removed - dynamic allocation
+		fmt.Printf("HTTP connections: %d\n", config.GetConnectionCount())
+		fmt.Printf("Log type distribution: %v\n", config.LogTypeDistribution)
+		fmt.Printf("Retry attempts: %d\n", config.MaxRetries)
+		fmt.Printf("Retry delay: %s\n", config.RetryDelay)
+		fmt.Printf("Prometheus metrics: %v\n", config.EnableMetrics)
+		if config.EnableMetrics {
+			fmt.Printf("Metrics port: %d\n", config.MetricsPort)
+		}
+		fmt.Printf("=======================\n\n")
 	}
-	fmt.Printf("=======================\n\n")
 
 	// Create appropriate log database
 	db, err := logdb.CreateLogDB(config.Mode, config.BaseURL, logdb.Options{

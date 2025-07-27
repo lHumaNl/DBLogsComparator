@@ -261,3 +261,44 @@ func FormatTimeForLoki(t time.Time) string {
 func FormatTimeRFC3339(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
+
+// GetRandomQuantile returns a random quantile value for query systems
+func GetRandomQuantile() string {
+	quantiles := []string{"0.5", "0.75", "0.9", "0.95", "0.99"}
+	return quantiles[rand.Intn(len(quantiles))]
+}
+
+// GetRandomQuantileFloat returns a random quantile value as float64 for Elasticsearch
+func GetRandomQuantileFloat() float64 {
+	quantiles := []float64{0.5, 0.75, 0.9, 0.95, 0.99}
+	return quantiles[rand.Intn(len(quantiles))]
+}
+
+// GetUniqueRandomQuantiles returns a slice of unique random quantile values
+func GetUniqueRandomQuantiles(count int) []float64 {
+	quantiles := []float64{0.5, 0.75, 0.9, 0.95, 0.99}
+	if count > len(quantiles) {
+		count = len(quantiles)
+	}
+	
+	// Shuffle the slice and take first 'count' elements
+	shuffled := make([]float64, len(quantiles))
+	copy(shuffled, quantiles)
+	
+	for i := len(shuffled) - 1; i > 0; i-- {
+		j := rand.Intn(i + 1)
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	}
+	
+	return shuffled[:count]
+}
+
+// GetUniqueRandomQuantileStrings returns a slice of unique random quantile values as strings
+func GetUniqueRandomQuantileStrings(count int) []string {
+	floatQuantiles := GetUniqueRandomQuantiles(count)
+	stringQuantiles := make([]string, len(floatQuantiles))
+	for i, q := range floatQuantiles {
+		stringQuantiles[i] = fmt.Sprintf("%.2f", q)
+	}
+	return stringQuantiles
+}

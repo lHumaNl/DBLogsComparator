@@ -41,12 +41,17 @@ func NewVictoriaLogsDB(baseURL string, options Options) (*VictoriaLogsDB, error)
 		TimeField: "timestamp", // Default value
 	}
 
-	// Create HTTP client
+	// Create HTTP client with dynamic connection count
+	maxConns := options.ConnectionCount
+	if maxConns <= 0 {
+		maxConns = 100 // fallback default
+	}
 	db.httpClient = &http.Client{
 		Timeout: db.Timeout,
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 100,
+			MaxIdleConns:        maxConns,
+			MaxIdleConnsPerHost: maxConns,
+			MaxConnsPerHost:     maxConns,
 			IdleConnTimeout:     90 * time.Second,
 		},
 	}
@@ -77,7 +82,7 @@ func (db *VictoriaLogsDB) Close() error {
 
 // Name returns the name of the database
 func (db *VictoriaLogsDB) Name() string {
-	return "VictoriaLogs"
+	return "victorialogs"
 }
 
 // FormatPayload formats log entries in NDJSON format for VictoriaLogs
@@ -154,11 +159,11 @@ func (db *VictoriaLogsDB) SendLogs(logs []LogEntry) error {
 		requestEnd := time.Now()
 
 		// Update metrics
-		db.MetricsData["request_duration"] = requestEnd.Sub(requestStart).Seconds()
+		db.UpdateMetric("request_duration", requestEnd.Sub(requestStart).Seconds())
 
 		if err != nil {
 			lastErr = err
-			db.MetricsData["failed_requests"]++
+			db.IncrementMetric("failed_requests", 1)
 			continue
 		}
 
@@ -167,15 +172,15 @@ func (db *VictoriaLogsDB) SendLogs(logs []LogEntry) error {
 		// Check response status
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			// Successful send
-			db.MetricsData["successful_requests"]++
-			db.MetricsData["total_logs"] += float64(len(logs))
+			db.IncrementMetric("successful_requests", 1)
+			db.IncrementMetric("total_logs", float64(len(logs)))
 			return nil
 		}
 
 		// Read response body to get error information
 		body, _ := io.ReadAll(resp.Body)
 		lastErr = fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, body)
-		db.MetricsData["failed_requests"]++
+		db.IncrementMetric("failed_requests", 1)
 
 		// If it's a server error (5xx), retry
 		// For client errors (4xx), there's no point in retrying

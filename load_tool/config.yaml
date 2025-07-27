@@ -1,15 +1,26 @@
-durationSeconds: 10
 metrics: true
 
 generator:
-  rps: 2
+  maxPerf:
+    steps: 3
+    stepDuration: 10
+    impact: 2
+    baseRPS: 10
+    startPercent: 10
+    incrementPercent: 10
+
+  stability:
+    stepDuration: 60
+    impact: 5
+    baseRPS: 10
+    stepPercent: 100
+
   bulkSize: 10
   maxRetries: 3
   retryDelayMs: 500
+  timeoutMs: 5000
 
-  workerCount: 4
-  connectionCount: 10
-  verbose: true
+  verbose: false
 
   distribution:
     web_access: 60
@@ -19,12 +30,25 @@ generator:
     metric: 5
 
 querier:
-  rps: 10
+  maxPerf:
+    steps: 3
+    stepDuration: 10
+    impact: 2
+    baseRPS: 10
+    startPercent: 10
+    incrementPercent: 10
+
+  stability:
+    stepDuration: 60
+    impact: 5
+    baseRPS: 10
+    stepPercent: 100
+
   maxRetries: 3
   retryDelayMs: 500
+  timeoutMs: 30000
 
-  workerCount: 2
-  verbose: true
+  verbose: false
 
   distribution:
     simple: 20

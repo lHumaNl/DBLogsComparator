@@ -1,20 +1,21 @@
 package pkg
 
 import (
+	"runtime"
 	"sync"
 	"time"
 )
 
 // Config - load configuration
 type Config struct {
-	Mode                string
-	BaseURL             string
-	URL                 string
-	RPS                 int
-	Duration            time.Duration
-	BulkSize            int
-	WorkerCount         int
-	ConnectionCount     int
+	Mode     string
+	BaseURL  string
+	URL      string
+	RPS      int
+	Duration time.Duration
+	BulkSize int
+	// WorkerCount removed - using runtime.NumCPU() * 4
+	// ConnectionCount removed - using dynamic CPU-based allocation
 	LogTypeDistribution map[string]int
 	Verbose             bool
 	MaxRetries          int
@@ -33,4 +34,9 @@ type Stats struct {
 	LogsByTypeMutex    sync.RWMutex // Mutex to protect the LogsByType map
 	RetriedRequests    int64
 	StartTime          time.Time
+}
+
+// GetConnectionCount returns the number of HTTP connections based on CPU count
+func (c *Config) GetConnectionCount() int {
+	return runtime.NumCPU() * 4
 }

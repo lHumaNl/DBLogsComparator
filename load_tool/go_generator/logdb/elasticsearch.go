@@ -28,12 +28,17 @@ func NewElasticsearchDB(baseURL string, options Options) (*ElasticsearchDB, erro
 		IndexPattern: "logs-2006.01.02", // Default value - uses Go time format
 	}
 
-	// Creating HTTP client
+	// Creating HTTP client with dynamic connection count
+	maxConns := options.ConnectionCount
+	if maxConns <= 0 {
+		maxConns = 100 // fallback default
+	}
 	db.httpClient = &http.Client{
 		Timeout: db.Timeout,
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 100,
+			MaxIdleConns:        maxConns,
+			MaxIdleConnsPerHost: maxConns,
+			MaxConnsPerHost:     maxConns,
 			IdleConnTimeout:     90 * time.Second,
 		},
 	}
@@ -178,7 +183,7 @@ func (db *ElasticsearchDB) Close() error {
 
 // Name returns database name
 func (db *ElasticsearchDB) Name() string {
-	return "Elasticsearch"
+	return "elasticsearch"
 }
 
 // getCurrentIndex returns current index name based on pattern
@@ -336,11 +341,11 @@ func (db *ElasticsearchDB) SendLogs(logs []LogEntry) error {
 		requestEnd := time.Now()
 
 		// Update metrics
-		db.MetricsData["request_duration"] = requestEnd.Sub(requestStart).Seconds()
+		db.UpdateMetric("request_duration", requestEnd.Sub(requestStart).Seconds())
 
 		if err != nil {
 			lastErr = err
-			db.MetricsData["failed_requests"]++
+			db.IncrementMetric("failed_requests", 1)
 			continue
 		}
 
@@ -349,15 +354,15 @@ func (db *ElasticsearchDB) SendLogs(logs []LogEntry) error {
 		// Check response status
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			// Successful send
-			db.MetricsData["successful_requests"]++
-			db.MetricsData["total_logs"] += float64(len(logs))
+			db.IncrementMetric("successful_requests", 1)
+			db.IncrementMetric("total_logs", float64(len(logs)))
 			return nil
 		}
 
 		// Read response body for error information
 		body, _ := io.ReadAll(resp.Body)
 		lastErr = fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, body)
-		db.MetricsData["failed_requests"]++
+		db.IncrementMetric("failed_requests", 1)
 
 		// If server error (5xx), retry
 		// For client errors (4xx), no need to retry

@@ -1,7 +1,9 @@
 package logdb
 
 import (
+	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -10,11 +12,12 @@ type LogEntry map[string]interface{}
 
 // Options contains parameters for log database initialization
 type Options struct {
-	BatchSize  int
-	Timeout    time.Duration
-	RetryCount int
-	RetryDelay time.Duration
-	Verbose    bool
+	BatchSize       int
+	Timeout         time.Duration
+	RetryCount      int
+	RetryDelay      time.Duration
+	Verbose         bool
+	ConnectionCount int // Number of HTTP connections for the pool
 }
 
 // LogDB - interface for all log databases
@@ -40,13 +43,14 @@ type LogDB interface {
 
 // BaseLogDB - base structure with common functionality for all log databases
 type BaseLogDB struct {
-	URL         string
-	BatchSize   int
-	Timeout     time.Duration
-	RetryCount  int
-	RetryDelay  time.Duration
-	MetricsData map[string]float64
-	Verbose     bool
+	URL          string
+	BatchSize    int
+	Timeout      time.Duration
+	RetryCount   int
+	RetryDelay   time.Duration
+	MetricsData  map[string]float64
+	metricsMutex sync.RWMutex
+	Verbose      bool
 }
 
 // NewBaseLogDB creates a new BaseLogDB instance
@@ -64,7 +68,51 @@ func NewBaseLogDB(url string, options Options) *BaseLogDB {
 
 // Metrics returns database operation metrics
 func (db *BaseLogDB) Metrics() map[string]float64 {
-	return db.MetricsData
+	db.metricsMutex.RLock()
+	defer db.metricsMutex.RUnlock()
+
+	// Return a copy to prevent external modification
+	result := make(map[string]float64)
+	for k, v := range db.MetricsData {
+		result[k] = v
+	}
+	return result
+}
+
+// UpdateMetric safely updates a metric value
+func (db *BaseLogDB) UpdateMetric(key string, value float64) {
+	db.metricsMutex.Lock()
+	defer db.metricsMutex.Unlock()
+	db.MetricsData[key] = value
+}
+
+// UpdateMetricWithContext safely updates a metric value with context check
+func (db *BaseLogDB) UpdateMetricWithContext(ctx context.Context, key string, value float64) {
+	select {
+	case <-ctx.Done():
+		// Context cancelled, skip metric update
+		return
+	default:
+		db.UpdateMetric(key, value)
+	}
+}
+
+// IncrementMetric safely increments a metric value
+func (db *BaseLogDB) IncrementMetric(key string, delta float64) {
+	db.metricsMutex.Lock()
+	defer db.metricsMutex.Unlock()
+	db.MetricsData[key] += delta
+}
+
+// IncrementMetricWithContext safely increments a metric value with context check
+func (db *BaseLogDB) IncrementMetricWithContext(ctx context.Context, key string, delta float64) {
+	select {
+	case <-ctx.Done():
+		// Context cancelled, skip metric update
+		return
+	default:
+		db.IncrementMetric(key, delta)
+	}
 }
 
 // CreateLogDB - factory method for creating LogDB instances

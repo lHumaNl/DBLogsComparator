@@ -60,6 +60,7 @@ limits_config:
   retention_period: ${LOKI_RETENTION_PERIOD}
   max_cache_freshness_per_query: 10m
   cardinality_limit: 100000
+  max_query_series: ${LOKI_MAX_QUERY_SERIES}
 
 querier:
   max_concurrent: ${LOKI_MAX_CONCURRENT_QUERIES}

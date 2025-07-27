@@ -13,15 +13,17 @@ import (
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
+	"gith
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
-	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
 )
 
 // ElasticsearchExecutor query executor for Elasticsearch
-type ElasticsearchExecutor struct {
-	BaseURL   string
-	Client    *http.Client
-	Options   models.Options
+	BaseURL    string
+	ClientPool *pkg.ClientPool // Use pool instead of single client
+	Options    models.Options
+	IndexName  string
 	IndexName string
 
 	// Cache for label values
@@ -66,9 +68,8 @@ var esQueryPhrases = []string{
 
 // NewElasticsearchExecutor creates a new query executor for Elasticsearch
 func NewElasticsearchExecutor(baseURL string, options models.Options) *ElasticsearchExecutor {
-	client := &http.Client{
-		Timeout: options.Timeout,
-	}
+	// Create HTTP client pool with dynamic connection count
+	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
 
 	// Initialize with static labels from our common data package
 	availableLabels := logdata.CommonLabels
@@ -82,7 +83,7 @@ func NewElasticsearchExecutor(baseURL string, options models.Options) *Elasticse
 
 	return &ElasticsearchExecutor{
 		BaseURL:            baseURL,
-		Client:             client,
+		ClientPool:         clientPool,
 		Options:            options,
 		IndexName:          "logs-*", // Using a mask for all log indices
 		labelCache:         labelCache,
@@ -93,7 +94,7 @@ func NewElasticsearchExecutor(baseURL string, options models.Options) *Elasticse
 
 // GetSystemName returns the system name
 func (e *ElasticsearchExecutor) GetSystemName() string {
-	return "Elasticsearch"
+	return "elasticsearch"
 }
 
 // ExecuteQuery executes a query of the specified type in Elasticsearch
@@ -556,7 +557,8 @@ func (e *ElasticsearchExecutor) executeElasticsearchQuery(ctx context.Context, q
 	startTime := time.Now()
 
 	// Execute the request
-	resp, err := e.Client.Do(req)
+	client := e.ClientPool.Get()
+	resp, err := client.Do(req)
 	if err != nil {
 		return models.QueryResult{}, err
 	}
@@ -818,6 +820,27 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 		}
 	}
 
+	// Add percentiles aggregation for numerical fields (40% chance)
+	if rand.Intn(10) < 4 {
+		numericFields := []string{"response_time", "latency", "bytes_sent", "duration", "cpu", "memory"}
+
+		
+		// Generate unique random percentiles
+		numPercentiles := rand.Intn(3) + 2 // 2-4 percentiles
+		uniqueQuantiles := common.GetUniqueRandomQuantiles(numPercentiles)
+		percentiles := make([]float64, len(uniqueQuantiles))
+		for i, q := range uniqueQuantiles {
+			percentiles[i] = q * 100 // Convert to percentage for ES
+
+		
+		aggregations[field+"_percentiles"] = map[string]interface{}{
+			"percentiles": map[string]interface{}{
+				"field":    field,
+				"percents": percentiles,
+			},
+		}
+	}
+
 	// Add aggregations to query
 	baseQuery["size"] = 0 // Don't need documents, just aggregations
 	baseQuery["aggs"] = aggregations
@@ -861,7 +884,7 @@ func (e *ElasticsearchExecutor) generateTimeSeriesQuery(baseQuery map[string]int
 func (e *ElasticsearchExecutor) generateStatisticalQuery(baseQuery map[string]interface{}, filters []interface{}) map[string]interface{} {
 	// Define available aggregation functions for Elasticsearch
 	aggFunctions := []string{
-		"avg", "min", "max", "sum", "cardinality", "value_count",
+		"avg", "min", "max", "sum", "cardinality", "value_count", "percentiles",
 	}
 
 	// Choose a random aggregation function
@@ -913,22 +936,58 @@ func (e *ElasticsearchExecutor) generateStatisticalQuery(baseQuery map[string]in
 					"fixed_interval": interval,
 				},
 				"aggs": map[string]interface{}{
-					"stat_value": map[string]interface{}{
-						aggFunction: map[string]interface{}{
-							"field": metricField,
-						},
-					},
+					"stat_value": func() map[string]interface{} {
+						if aggFunction == "percentiles" {
+							// Use unique random percentiles for date histogram too
+							numPercentiles := rand.Intn(3) + 1 // 1-3 percentiles
+							uniqueQuantiles := common.GetUniqueRandomQuantiles(numPercentiles)
+							percentiles := make([]float64, len(uniqueQuantiles))
+							for i, q := range uniqueQuantiles {
+								percentiles[i] = q * 100 // Convert to percentage for ES
+							}
+							return map[string]interface{}{
+								"percentiles": map[string]interface{}{
+									"field":    metricField,
+									"percents": percentiles,
+								},
+							}
+						}
+						return map[string]interface{}{
+							aggFunction: map[string]interface{}{
+								"field": metricField,
+							},
+						}
+					}(),
 				},
 			},
 		}
 	} else {
 		// Simple statistical aggregation
-		aggregation = map[string]interface{}{
-			"stat_result": map[string]interface{}{
-				aggFunction: map[string]interface{}{
-					"field": metricField,
+		if aggFunction == "percentiles" {
+			// Special handling for percentiles aggregation - use unique random percentiles
+			numPercentiles := rand.Intn(3) + 1 // 1-3 percentiles
+			uniqueQuantiles := common.GetUniqueRandomQuantiles(numPercentiles)
+			percentiles := make([]float64, len(uniqueQuantiles))
+			for i, q := range uniqueQuantiles {
+				percentiles[i] = q * 100 // Convert to percentage for ES
+
+			
+			aggregation = map[string]interface{}{
+				"stat_result": map[string]interface{}{
+					"percentiles": map[string]interface{}{
+						"field":    metricField,
+						"percents": percentiles,
+					},
 				},
-			},
+			}
+		} else {
+			aggregation = map[string]interface{}{
+				"stat_result": map[string]interface{}{
+					aggFunction: map[string]interface{}{
+						"field": metricField,
+					},
+				},
+			}
 		}
 	}
 

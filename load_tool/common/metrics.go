@@ -1,8 +1,10 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -27,13 +29,13 @@ var (
 	WriteRequestsSuccess = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_write_requests_success",
 		Help: "Number of successful log write requests",
-	}, []string{"system"})
+	}, []string{"system", "log_type"})
 
 	// WriteRequestsFailure counts the number of failed log write requests
 	WriteRequestsFailure = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_write_requests_failure",
 		Help: "Number of failed log write requests",
-	}, []string{"system", "error_type"})
+	}, []string{"system", "log_type", "error_type"})
 
 	// WriteLogsTotal counts the total number of sent logs
 	// by types and destination systems
@@ -56,10 +58,10 @@ var (
 	}, []string{"system", "status"})
 
 	// WriteBatchSizeGauge shows the current log batch size
-	WriteBatchSizeGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	WriteBatchSizeGauge = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "dblogscomp_generator_batch_size",
 		Help: "Current log batch size in generator",
-	})
+	}, []string{"system"})
 
 	// Metrics for read operations
 	ReadRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -70,12 +72,12 @@ var (
 	ReadRequestsSuccess = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_read_requests_success",
 		Help: "Number of successful log read requests",
-	}, []string{"system"})
+	}, []string{"system", "query_type"})
 
 	ReadRequestsFailure = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_read_requests_failure",
 		Help: "Number of failed log read requests",
-	}, []string{"system", "error_type"})
+	}, []string{"system", "query_type", "error_type"})
 
 	ReadRequestsRetried = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_read_requests_retried",
@@ -103,13 +105,13 @@ var (
 		Name:    "dblogscomp_querier_result_size_bytes", // renamed for clarity
 		Help:    "Histogram of query result sizes in querier",
 		Buckets: prometheus.ExponentialBuckets(1024, 2, 10), // from 1KB to ~1MB
-	}, []string{"system"})
+	}, []string{"system", "type"})
 
 	ResultHitsHistogram = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "dblogscomp_querier_result_hits", // renamed for clarity
 		Help:    "Histogram of query result hits in querier",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 15), // from 1 to ~16K with a multiplier of 2
-	}, []string{"system"})
+	}, []string{"system", "type"})
 
 	// Metrics by systems
 	OperationCounter = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -121,7 +123,7 @@ var (
 	CurrentRPS = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "dblogscomp_current_rps",
 		Help: "Current requests per second",
-	}, []string{"component"})
+	}, []string{"component", "system"})
 
 	// New metric to track generator throughput
 	GeneratorThroughput = promauto.NewGaugeVec(prometheus.GaugeOpts{
@@ -164,7 +166,30 @@ var (
 
 	// Flag indicating that the metrics server has already been started
 	metricsServerStarted bool
+	metricsServer        *http.Server
+
+	// Current system name for metrics
+	currentSystemName string
 )
+
+// normalizeSystemName normalizes system names to lowercase
+func normalizeSystemName(system string) string {
+	switch strings.ToLower(system) {
+	case "elasticsearch":
+		return "elasticsearch"
+	case "loki":
+		return "loki"
+	case "victorialogs":
+		return "victorialogs"
+	default:
+		return strings.ToLower(system)
+	}
+}
+
+// NormalizeSystemName - public function for normalizing system names
+func NormalizeSystemName(system string) string {
+	return normalizeSystemName(system)
+}
 
 // rpsIncrementingMetric wrapper structure for CounterVec that increases RPS counter when Inc() is called
 type rpsIncrementingMetric struct {
@@ -193,73 +218,89 @@ func (c *rpsIncrementingCounter) Add(val float64) {
 }
 
 // IncrementWriteRequests increases the write requests counter
-// system - logging system name (elasticsearch, loki, victoria)
+// system - logging system name (elasticsearch, loki, victorialogs)
 // component - component (generator or querier)
 func IncrementWriteRequests(system string) {
 	if system == "" {
 		system = "unknown"
 	}
-	WriteRequestsTotal.WithLabelValues(system).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	WriteRequestsTotal.WithLabelValues(normalizedSystem).Inc()
 	atomic.AddInt64(&writeRequestsCount, 1)
 }
 
 // IncrementReadRequests increases the read requests counter
-// system - logging system name (elasticsearch, loki, victoria)
+// system - logging system name (elasticsearch, loki, victorialogs)
 // component - component (generator or querier)
 func IncrementReadRequests(system string) {
 	if system == "" {
 		system = "unknown"
 	}
-	ReadRequestsTotal.WithLabelValues(system).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	ReadRequestsTotal.WithLabelValues(normalizedSystem).Inc()
 	atomic.AddInt64(&readRequestsCount, 1)
 }
 
 // IncrementSuccessfulWrite increases the successful write requests counter
-// system - logging system name (elasticsearch, loki, victoria)
-// component - component (generator or querier)
-func IncrementSuccessfulWrite(system string) {
+// system - logging system name (elasticsearch, loki, victorialogs)
+// logType - log type (application, web_access, web_error, event, metric)
+func IncrementSuccessfulWrite(system, logType string) {
 	if system == "" {
 		system = "unknown"
 	}
-	WriteRequestsSuccess.WithLabelValues(system).Inc()
+	if logType == "" {
+		logType = "unknown"
+	}
+	normalizedSystem := normalizeSystemName(system)
+	WriteRequestsSuccess.WithLabelValues(normalizedSystem, logType).Inc()
 }
 
 // IncrementFailedWrite increases the failed write requests counter
-// system - logging system name, errorType - error type
-// component - component (generator or querier)
-func IncrementFailedWrite(system, errorType string) {
+// system - logging system name, logType - log type, errorType - error type
+func IncrementFailedWrite(system, logType, errorType string) {
 	if system == "" {
 		system = "unknown"
+	}
+	if logType == "" {
+		logType = "unknown"
 	}
 	if errorType == "" {
 		errorType = "unknown"
 	}
-	WriteRequestsFailure.WithLabelValues(system, errorType).Inc()
-	ErrorTypeCounter.WithLabelValues(errorType, "write", system).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	WriteRequestsFailure.WithLabelValues(normalizedSystem, logType, errorType).Inc()
+	ErrorTypeCounter.WithLabelValues(errorType, "write", normalizedSystem).Inc()
 }
 
 // IncrementSuccessfulRead increases the successful read requests counter
-// system - logging system name (elasticsearch, loki, victoria)
-// component - component (generator or querier)
-func IncrementSuccessfulRead(system string) {
+// system - logging system name (elasticsearch, loki, victorialogs)
+// queryType - query type (simple, complex, analytical, timeseries, stat, topk)
+func IncrementSuccessfulRead(system, queryType string) {
 	if system == "" {
 		system = "unknown"
 	}
-	ReadRequestsSuccess.WithLabelValues(system).Inc()
+	if queryType == "" {
+		queryType = "unknown"
+	}
+	normalizedSystem := normalizeSystemName(system)
+	ReadRequestsSuccess.WithLabelValues(normalizedSystem, queryType).Inc()
 }
 
 // IncrementFailedRead increases the failed read requests counter
-// system - logging system name, errorType - error type
-// component - component (generator or querier)
-func IncrementFailedRead(system, errorType string) {
+// system - logging system name, queryType - query type, errorType - error type
+func IncrementFailedRead(system, queryType, errorType string) {
 	if system == "" {
 		system = "unknown"
+	}
+	if queryType == "" {
+		queryType = "unknown"
 	}
 	if errorType == "" {
 		errorType = "unknown"
 	}
-	ReadRequestsFailure.WithLabelValues(system, errorType).Inc()
-	ErrorTypeCounter.WithLabelValues(errorType, "read", system).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	ReadRequestsFailure.WithLabelValues(normalizedSystem, queryType, errorType).Inc()
+	ErrorTypeCounter.WithLabelValues(errorType, "read", normalizedSystem).Inc()
 }
 
 // IncrementConnectionError increases the connection error counter
@@ -272,7 +313,8 @@ func IncrementConnectionError(system, errorType string) {
 	if errorType == "" {
 		errorType = "unknown"
 	}
-	ConnectionErrors.WithLabelValues(system, errorType).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	ConnectionErrors.WithLabelValues(normalizedSystem, errorType).Inc()
 }
 
 // ObserveWriteDuration records the execution time of a write request
@@ -285,8 +327,9 @@ func ObserveWriteDuration(system, status string, duration float64) {
 	if status == "" {
 		status = "unknown"
 	}
-	WriteDurationHistogram.WithLabelValues(system, status).Observe(duration)
-	SystemLatencyHistogram.WithLabelValues(system, "write").Observe(duration)
+	normalizedSystem := normalizeSystemName(system)
+	WriteDurationHistogram.WithLabelValues(normalizedSystem, status).Observe(duration)
+	SystemLatencyHistogram.WithLabelValues(normalizedSystem, "write").Observe(duration)
 }
 
 // ObserveReadDuration records the execution time of a read request
@@ -299,8 +342,9 @@ func ObserveReadDuration(system, status string, duration float64) {
 	if status == "" {
 		status = "unknown"
 	}
-	ReadDurationHistogram.WithLabelValues(system, status).Observe(duration)
-	SystemLatencyHistogram.WithLabelValues(system, "read").Observe(duration)
+	normalizedSystem := normalizeSystemName(system)
+	ReadDurationHistogram.WithLabelValues(normalizedSystem, status).Observe(duration)
+	SystemLatencyHistogram.WithLabelValues(normalizedSystem, "read").Observe(duration)
 }
 
 // IncrementQueryType increases the counter of queries by type
@@ -312,8 +356,9 @@ func IncrementQueryType(system, queryType string) {
 	if system == "" {
 		system = "unknown"
 	}
-	QueryTypeCounter.WithLabelValues(queryType, system).Inc()
-	OperationCounter.WithLabelValues("query", system).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	QueryTypeCounter.WithLabelValues(queryType, normalizedSystem).Inc()
+	OperationCounter.WithLabelValues("query", normalizedSystem).Inc()
 }
 
 // IncrementFailedQueryType increases the counter of failed queries by type
@@ -328,7 +373,8 @@ func IncrementFailedQueryType(system, queryType string, errorType string) {
 	if errorType == "" {
 		errorType = "unknown"
 	}
-	FailedQueryTypeCounter.WithLabelValues(queryType, system, errorType).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	FailedQueryTypeCounter.WithLabelValues(queryType, normalizedSystem, errorType).Inc()
 }
 
 // IncrementLogType increases the counter of sent logs by type
@@ -340,8 +386,9 @@ func IncrementLogType(system, logType string) {
 	if logType == "" {
 		logType = "unknown"
 	}
-	WriteLogsTotal.WithLabelValues(logType, system).Inc()
-	OperationCounter.WithLabelValues("write", system).Inc()
+	normalizedSystem := normalizeSystemName(system)
+	WriteLogsTotal.WithLabelValues(logType, normalizedSystem).Inc()
+	OperationCounter.WithLabelValues("write", normalizedSystem).Inc()
 	// Count each log write operation as a write request
 	atomic.AddInt64(&writeRequestsCount, 1)
 }
@@ -382,8 +429,13 @@ func UpdateGeneratorThroughput(system, logType string, logsPerSec float64) {
 }
 
 // RecordWriteBatchSize records the log batch size
-func RecordWriteBatchSize(size int) {
-	WriteBatchSizeGauge.Set(float64(size))
+// system - logging system name (elasticsearch, loki, victorialogs)
+func RecordWriteBatchSize(system string, size int) {
+	if system == "" {
+		system = "unknown"
+	}
+	normalizedSystem := normalizeSystemName(system)
+	WriteBatchSizeGauge.WithLabelValues(normalizedSystem).Set(float64(size))
 }
 
 // RecordResourceUsage records resource usage
@@ -398,13 +450,16 @@ func RecordResourceUsage(resourceType string, value float64) {
 }
 
 // InitPrometheus initializes metrics registration
-func InitPrometheus(bulkSize int) {
+func InitPrometheus(system string, bulkSize int) {
+	// Set the current system name for RPS metrics
+	currentSystemName = system
+
 	// Start a separate goroutine to update metrics in real time
 	go updateRealTimeMetrics()
 
 	// Set the initial value for the log batch size if it's a generator
 	if bulkSize > 0 {
-		RecordWriteBatchSize(bulkSize)
+		RecordWriteBatchSize(system, bulkSize)
 	}
 
 }
@@ -433,9 +488,12 @@ func updateRealTimeMetrics() {
 		rps := writeRequests / elapsed
 		qps := readRequests / elapsed
 
-		// Update metrics with component labels
-		CurrentRPS.WithLabelValues("generator").Set(rps)
-		CurrentRPS.WithLabelValues("querier").Set(qps)
+		// Update metrics with component labels using the current system
+		if currentSystemName != "" {
+			normalizedSystem := normalizeSystemName(currentSystemName)
+			CurrentRPS.WithLabelValues("generator", normalizedSystem).Set(rps)
+			CurrentRPS.WithLabelValues("querier", normalizedSystem).Set(qps)
+		}
 
 		// Update general operation counters if there's activity
 		// Removed updating OperationCounter for system="total" to fix dblogscomp_operations_total metric
@@ -456,16 +514,38 @@ func StartMetricsServer(port int) {
 
 	// IMPORTANT: use the standard promhttp.Handler() instead of HandlerFor
 	// for proper registration of promhttp_* metrics in the registry
-	http.Handle("/metrics", promhttp.Handler())
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+
+	addr := fmt.Sprintf(":%d", port)
+	metricsServer = &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
 
 	go func() {
-		addr := fmt.Sprintf(":%d", port)
 		fmt.Printf("Metrics server started at %s/metrics\n", addr)
-		if err := http.ListenAndServe(addr, nil); err != nil {
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("Error starting metrics server: %v\n", err)
 		}
 	}()
 
 	// Set the flag indicating that the metrics server has been started
 	metricsServerStarted = true
+}
+
+// StopMetricsServer gracefully shuts down the metrics server
+func StopMetricsServer() {
+	if metricsServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := metricsServer.Shutdown(ctx); err != nil {
+			fmt.Printf("Error shutting down metrics server: %v\n", err)
+		} else {
+			fmt.Println("Metrics server stopped gracefully")
+		}
+		metricsServer = nil
+		metricsServerStarted = false
+	}
 }

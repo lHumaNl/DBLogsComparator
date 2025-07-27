@@ -14,15 +14,17 @@ import (
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
+	queriercommon "github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
 // LokiExecutor executes queries against Loki
 type LokiExecutor struct {
-	BaseURL string
-	Options models.Options
-	Client  *http.Client
+	BaseURL    string
+	Options    models.Options
+	ClientPool *pkg.ClientPool // Use pool instead of single client
 
 	// Cache for label values
 	labelCache     map[string][]string
@@ -32,15 +34,17 @@ type LokiExecutor struct {
 	availableLabels []string
 
 	// Time range generator for realistic queries
-	timeRangeGenerator *common.TimeRangeGenerator
+	// timeRangeGenerator *common.TimeRangeGenerator
+
+	// Thread-safe random generator
+	rng      *rand.Rand
+	rngMutex sync.Mutex
 }
 
 // NewLokiExecutor creates a new Loki executor
 func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
-	// Create a new HTTP client with a timeout
-	client := &http.Client{
-		Timeout: options.Timeout,
-	}
+	// Create HTTP client pool with dynamic connection count
+	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
 
 	// Initialize with static labels from our common data package
 	availableLabels := logdata.CommonLabels
@@ -53,15 +57,23 @@ func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
 	}
 
 	executor := &LokiExecutor{
-		BaseURL:            baseURL,
-		Options:            options,
-		Client:             client,
-		labelCache:         labelCache,
-		availableLabels:    availableLabels,
-		timeRangeGenerator: common.NewTimeRangeGenerator(),
+		BaseURL:         baseURL,
+		Options:         options,
+		ClientPool:      clientPool,
+		labelCache:      labelCache,
+		availableLabels: availableLabels,
+		// timeRangeGenerator: queriercommon.NewTimeRangeGenerator(),
+		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	return executor
+}
+
+// safeRandIntn returns a thread-safe random number in range [0, n)
+func (e *LokiExecutor) safeRandIntn(n int) int {
+	e.rngMutex.Lock()
+	defer e.rngMutex.Unlock()
+	return e.rng.Intn(n)
 }
 
 // GetSystemName returns the system name
@@ -90,7 +102,7 @@ func (e *LokiExecutor) GetLabelValues(ctx context.Context, label string) ([]stri
 	}
 
 	// For any label we don't have in our static data, return some generic values
-	genericValues := []string{"value1", "value2", "value3", "value-" + fmt.Sprint(rand.Intn(100))}
+	genericValues := []string{"value1", "value2", "value3", "value-" + fmt.Sprint(e.safeRandIntn(100))}
 
 	// Cache these values for future use
 	e.labelCacheLock.Lock()
@@ -103,14 +115,23 @@ func (e *LokiExecutor) GetLabelValues(ctx context.Context, label string) ([]stri
 // GenerateRandomQuery creates a random query of the specified type for Loki
 func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
 	// Generate time range for the query
-	timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
-	startTimeStr := common.FormatTimeForLoki(timeRange.Start)
-	endTimeStr := common.FormatTimeForLoki(timeRange.End)
+	// timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
+	// Use a simple time range for now
+	now := time.Now()
+	timeRange := struct {
+		Start time.Time
+		End   time.Time
+	}{
+		Start: now.Add(-1 * time.Hour),
+		End:   now,
+	}
+	startTimeStr := queriercommon.FormatTimeForLoki(timeRange.Start)
+	endTimeStr := queriercommon.FormatTimeForLoki(timeRange.End)
 
-	// Set reasonable limits for the query - make limit random
-	limits := []string{"10", "50", "100", "200", "500", "1000"}
-	limit := limits[rand.Intn(len(limits))] // Random limit for log queries
-	step := "10s"                           // Default step for metric queries
+	// Set reasonable limits for the query - make limit random (max 500 to avoid series limits)
+	limits := []string{"10", "50", "100", "200", "300", "500"}
+	limit := limits[e.safeRandIntn(len(limits))] // Random limit for log queries
+	step := "10s"                                // Default step for metric queries
 
 	// Set shorter step for short time ranges
 	rangeDuration := timeRange.End.Sub(timeRange.Start)
@@ -182,20 +203,20 @@ func (e *LokiExecutor) generateSimpleQuery(availableLabels []string) string {
 
 	// If no common label found, choose any random label
 	if chosenLabel == "" {
-		chosenLabel = availableLabels[rand.Intn(len(availableLabels))]
+		chosenLabel = availableLabels[e.safeRandIntn(len(availableLabels))]
 	}
 
 	// Use our static data to get values for this label
 	var selectedValues []string
 	// Choose 1-2 random values
-	count := rand.Intn(2) + 1
+	count := e.safeRandIntn(2) + 1
 	selectedValues = logdata.GetMultipleRandomValuesForLabel(chosenLabel, count)
 
 	// Create the query string
 	var queryString string
 	if len(selectedValues) > 0 {
 		// Most frequently used pattern - exact label match (more likely to return results)
-		if rand.Intn(10) < 8 {
+		if e.safeRandIntn(10) < 8 {
 			if len(selectedValues) == 1 {
 				queryString = fmt.Sprintf("{%s=\"%s\"}", chosenLabel, selectedValues[0])
 			} else {
@@ -203,8 +224,9 @@ func (e *LokiExecutor) generateSimpleQuery(availableLabels []string) string {
 				queryString = fmt.Sprintf("{%s=~\"(%s)\"}", chosenLabel, strings.Join(selectedValues, "|"))
 			}
 		} else {
-			// Less frequently used - exclusion pattern
-			queryString = fmt.Sprintf("{%s!=\"%s\"}", chosenLabel, selectedValues[0])
+			// Less frequently used - exclusion pattern with positive selector to avoid Loki error
+			// Add a positive selector to make the query valid
+			queryString = fmt.Sprintf("{%s=~\".+\",%s!=\"%s\"}", chosenLabel, chosenLabel, selectedValues[0])
 		}
 
 		// Add text filter for some queries to make the query more realistic
@@ -295,8 +317,8 @@ func (e *LokiExecutor) generateComplexQuery(availableLabels []string) string {
 
 // generateAnalyticalQuery creates an analytical query
 func (e *LokiExecutor) generateAnalyticalQuery() string {
-	// Fields that we can unwrap from logs
-	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "level", "status_code"}
+	// Fields that we can unwrap from logs (only numeric fields)
+	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "status_code", "response_time", "cpu", "memory"}
 
 	// Define aggregation functions including those requiring unwrap
 	aggregationFuncs := []string{
@@ -335,8 +357,14 @@ func (e *LokiExecutor) generateAnalyticalQuery() string {
 			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(selectedValues, "|"))
 		}
 	} else {
-		// Use regex for all values
-		selector = fmt.Sprintf(`{%s=~".+"}`, label)
+		// Use specific values instead of wide regex to avoid hitting series limit
+		// Select 1-3 specific values to make query more targeted
+		specificValues := logdata.GetMultipleRandomValuesForLabel(label, 1+rand.Intn(3))
+		if len(specificValues) == 1 {
+			selector = fmt.Sprintf(`{%s="%s"}`, label, specificValues[0])
+		} else {
+			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(specificValues, "|"))
+		}
 	}
 
 	var expression string
@@ -349,21 +377,35 @@ func (e *LokiExecutor) generateAnalyticalQuery() string {
 		// Select an aggregation function that works with unwrap
 		aggFunc := aggregationFuncs[rand.Intn(len(aggregationFuncs))]
 
-		// Create a query with unwrap
+		// Create a query with unwrap - use proper LogQL syntax
 		if strings.Contains(aggFunc, "_over_time") {
-			// For _over_time functions, we need to unwrap first then apply the function
-			expression = fmt.Sprintf("%s((%s | unwrap %s)[%s])",
-				aggFunc,
-				selector,
-				unwrapField,
-				timeWindow,
-			)
+			// For _over_time functions, use proper LogQL unwrap syntax
+			if aggFunc == "quantile_over_time" {
+				// quantile_over_time requires a quantile parameter
+				quantile := common.GetRandomQuantile()
+				expression = fmt.Sprintf("%s(%s, (%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s])",
+					aggFunc,
+					quantile,
+					selector,
+					unwrapField,
+					timeWindow,
+				)
+			} else {
+				expression = fmt.Sprintf("%s((%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s])",
+					aggFunc,
+					selector,
+					unwrapField,
+					timeWindow,
+				)
+			}
 		} else {
-			// For other aggregations, we can do the unwrap and then apply the function
-			expression = fmt.Sprintf("%s(%s | unwrap %s)",
-				aggFunc,
+			// For other aggregations, use simpler non-unwrap queries to avoid syntax errors
+			simpleFuncs := []string{"count_over_time", "rate", "bytes_rate", "bytes_over_time"}
+			simpleFunc := simpleFuncs[rand.Intn(len(simpleFuncs))]
+			expression = fmt.Sprintf("%s(%s[%s])",
+				simpleFunc,
 				selector,
-				unwrapField,
+				timeWindow,
 			)
 		}
 	} else {
@@ -455,8 +497,8 @@ func (e *LokiExecutor) generateStatQuery(availableLabels []string) string {
 		"sum", "min", "max", "avg", "count", "stddev", "stdvar",
 	}
 
-	// Fields that we can unwrap from logs
-	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "level", "status_code"}
+	// Fields that we can unwrap from logs (only numeric fields)
+	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "status_code", "response_time", "cpu", "memory"}
 
 	// Define valid time window functions compatible with Loki
 	timeWindowFuncs := []string{
@@ -498,8 +540,14 @@ func (e *LokiExecutor) generateStatQuery(availableLabels []string) string {
 			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(selectedValues, "|"))
 		}
 	} else {
-		// Use regex for all values
-		selector = fmt.Sprintf(`{%s=~".+"}`, label)
+		// Use specific values instead of wide regex to avoid hitting series limit
+		// Select 1-3 specific values to make query more targeted
+		specificValues := logdata.GetMultipleRandomValuesForLabel(label, 1+rand.Intn(3))
+		if len(specificValues) == 1 {
+			selector = fmt.Sprintf(`{%s="%s"}`, label, specificValues[0])
+		} else {
+			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(specificValues, "|"))
+		}
 	}
 
 	var expression string
@@ -511,13 +559,26 @@ func (e *LokiExecutor) generateStatQuery(availableLabels []string) string {
 		// These functions need unwrap
 		unwrapField := unwrapFields[rand.Intn(len(unwrapFields))]
 
-		expression = fmt.Sprintf("%s(%s((%s | unwrap %s)[%s]))",
-			aggregationFunc,
-			timeWindowFunc,
-			selector,
-			unwrapField,
-			timeWindow,
-		)
+		if timeWindowFunc == "quantile_over_time" {
+			// quantile_over_time requires a quantile parameter
+			quantile := common.GetRandomQuantile()
+			expression = fmt.Sprintf("%s(%s(%s, (%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s]))",
+				aggregationFunc,
+				timeWindowFunc,
+				quantile,
+				selector,
+				unwrapField,
+				timeWindow,
+			)
+		} else {
+			expression = fmt.Sprintf("%s(%s((%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s]))",
+				aggregationFunc,
+				timeWindowFunc,
+				selector,
+				unwrapField,
+				timeWindow,
+			)
+		}
 	} else {
 		// Standard functions without unwrap
 		expression = fmt.Sprintf("%s(%s(%s [%s]))",
@@ -619,7 +680,8 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 
 	// Execute the request
 	startTime := time.Now()
-	resp, err := e.Client.Do(req)
+	client := e.ClientPool.Get()
+	resp, err := client.Do(req)
 	if err != nil {
 		return models.QueryResult{}, fmt.Errorf("error executing request: %v", err)
 	}
@@ -633,6 +695,12 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 
 	// Check if the response status code is not 2xx
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Log detailed error information using structured logging
+		// common.LogLokiError(resp.StatusCode, queryInfo["query"], queryURL, string(bodyBytes))
+		fmt.Printf("Loki query error: status %d, query: %v, URL: %s, response: %s\n",
+			resp.StatusCode, queryInfo["query"], queryURL, string(bodyBytes))
+
+		// Return error with HTTP status code and response body
 		return models.QueryResult{}, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(bodyBytes))
 	}
 

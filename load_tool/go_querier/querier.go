@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,7 +73,7 @@ type QueryConfig struct {
 	BaseURL               string
 	QPS                   int
 	DurationSeconds       int
-	WorkerCount           int
+	// WorkerCount removed - using runtime.NumCPU() * 4
 	QueryTypeDistribution map[models.QueryType]int
 	QueryTimeout          time.Duration
 	MaxRetries            int
@@ -118,44 +119,178 @@ func CreateQueryExecutor(mode, baseURL string, options models.Options, workerID 
 	}
 }
 
-// RunQuerier starts the query module
+// RunQuerier starts the query module with asynchronous processing
 func RunQuerier(config QueryConfig, executor models.QueryExecutor, stats *common.Stats) error {
-	// Initialize channels and goroutines
-	jobs := make(chan struct{}, config.QPS*2)
-	stopChan := make(chan struct{})
+	return RunQuerierWithContext(context.Background(), config, executor, stats)
+}
 
-	// Start worker goroutines
+// RunQuerierWithContext starts the query module with context support for graceful shutdown
+func RunQuerierWithContext(ctx context.Context, config QueryConfig, executor models.QueryExecutor, stats *common.Stats) error {
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Channels for async operation with backpressure protection
+	queryChan := make(chan struct{}, config.QPS*10) // Large buffer to prevent blocking
+	stopChan := make(chan struct{})
 	var wg sync.WaitGroup
-	for w := 1; w <= config.WorkerCount; w++ {
-		wg.Add(1)
-		worker := Worker{
-			ID:        w,
-			Jobs:      jobs,
-			Stats:     stats,
-			Config:    config,
-			Executor:  executor,
-			WaitGroup: &wg,
-		}
-		go runWorker(worker)
+
+	// Calculate number of async processors based on CPU cores
+	numProcessors := runtime.NumCPU() * 4
+	if config.Verbose {
+		fmt.Printf("Starting %d async query processors (CPU cores: %d)\n", numProcessors, runtime.NumCPU())
 	}
 
-	// Main load generation loop
+	// Start async query processors
+	for i := 0; i < numProcessors; i++ {
+		wg.Add(1)
+		go func(processorID int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					if config.Verbose {
+						fmt.Printf("Query processor %d stopping due to context cancellation\n", processorID)
+					}
+					return
+				case <-queryChan:
+					// Process query asynchronously with retry logic
+					processQuery(processorID, stats, config, executor)
+				}
+			}
+		}(i)
+	}
+
+	// QPS ticker - sends queries at specified rate without waiting for responses
 	tickInterval := time.Second / time.Duration(config.QPS)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	endTime := time.Now().Add(config.Duration())
+	backpressureCount := int64(0)
 
 	for time.Now().Before(endTime) {
-		<-ticker.C
-		jobs <- struct{}{}
+		select {
+		case <-ctx.Done():
+			if config.Verbose {
+				fmt.Printf("\nQuerier stopping due to context cancellation\n")
+			}
+			goto cleanup
+		case <-ticker.C:
+			// Non-blocking send to prevent QPS degradation
+			select {
+			case queryChan <- struct{}{}:
+				// Query queued successfully
+			default:
+				// Query channel full - apply backpressure
+				backpressureCount++
+				if config.Verbose && backpressureCount%100 == 0 {
+					fmt.Printf("\nWarning: Query backpressure applied %d times - system overloaded\n", backpressureCount)
+				}
+				stats.IncrementFailedQueries()
+			}
+		}
 	}
 
-	close(jobs)
+cleanup:
+	// Graceful shutdown
+	close(queryChan)
+	cancel() // Cancel context to stop all processors
 	wg.Wait()
 	close(stopChan)
 
+	if config.Verbose && backpressureCount > 0 {
+		fmt.Printf("Query backpressure events: %d\n", backpressureCount)
+	}
+
 	return nil
+}
+
+// processQuery processes a single query without retry logic
+func processQuery(processorID int, stats *common.Stats, config QueryConfig, executor models.QueryExecutor) {
+	// Select a random query type based on distribution
+	queryType := selectRandomQueryType(config.QueryTypeDistribution)
+
+	// Generate query beforehand to have it for error logging
+	generatedQuery := executor.GenerateRandomQuery(queryType)
+	queryString := fmt.Sprintf("%v", generatedQuery)
+
+	// Increment the total query counter
+	stats.IncrementTotalQueries()
+	common.IncrementReadRequests(executor.GetSystemName())
+
+	// Create a context with timeout for the query
+	queryCtx, cancel := context.WithTimeout(context.Background(), config.QueryTimeout)
+	defer cancel()
+
+	// Execute the query (no retries in querier)
+	startTime := time.Now()
+	result, err := executor.ExecuteQuery(queryCtx, queryType)
+	duration := time.Since(startTime)
+
+	// Update metrics
+	common.ObserveReadDuration(executor.GetSystemName(), "attempt", duration.Seconds())
+	common.IncrementQueryType(executor.GetSystemName(), string(queryType))
+
+	if err == nil {
+		// Success - update metrics
+		stats.IncrementSuccessfulQueries()
+		common.IncrementSuccessfulRead(executor.GetSystemName(), string(queryType))
+
+		// Update statistics based on results
+		stats.AddHits(result.HitCount)
+		stats.AddBytesRead(result.BytesRead)
+
+		// Update Prometheus metrics
+		normalizedSystem := common.NormalizeSystemName(executor.GetSystemName())
+		common.ResultHitsHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.HitCount))
+		common.ResultSizeHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.BytesRead))
+
+		// Output query information if verbose mode is enabled
+		if config.Verbose {
+			// Format timerange for display
+			timeRangeStr := ""
+			if !result.StartTime.IsZero() && !result.EndTime.IsZero() {
+				startStr := result.StartTime.Format("2006-01-02 15:04:05")
+				endStr := result.EndTime.Format("2006-01-02 15:04:05")
+				timeRangeStr = fmt.Sprintf(" [%s to %s]", startStr, endStr)
+			}
+
+			// Format limit if available
+			limitStr := ""
+			if result.Limit != "" {
+				limitStr = fmt.Sprintf(" limit:%s", result.Limit)
+			}
+
+			// Format step if available
+			stepStr := ""
+			if result.Step != "" {
+				stepStr = fmt.Sprintf(" step:%s", result.Step)
+			}
+
+			// Log with query details
+			fmt.Printf("[Processor %d] Query %s: %s%s%s%s found %d records, read %d bytes, time %v\n",
+				processorID, queryType, result.QueryString, timeRangeStr, limitStr, stepStr, result.HitCount, result.BytesRead, duration)
+		}
+
+		return
+	}
+
+	// Query failed - no retries in querier
+	stats.IncrementFailedQueries()
+	common.IncrementFailedRead(executor.GetSystemName(), string(queryType), "query_error")
+	
+	if config.Verbose {
+		fmt.Printf("Processor %d: Query failed for %s: %v\n", processorID, queryType, err)
+	}
+	
+	// Log error using structured logging with query string
+	// Use generated query string or result query string if available
+	finalQueryString := queryString
+	if result.QueryString != "" {
+		finalQueryString = result.QueryString
+	}
+	common.LogQueryError(processorID, string(queryType), executor.GetSystemName(), err, finalQueryString)
 }
 
 // runWorker starts a worker goroutine
@@ -190,7 +325,7 @@ func runWorker(worker Worker) {
 		// Update counters based on the result
 		if err != nil {
 			worker.Stats.IncrementFailedQueries()
-			common.IncrementFailedRead(worker.Executor.GetSystemName(), "query_error")
+			common.IncrementFailedRead(worker.Executor.GetSystemName(), string(queryType), "query_error")
 
 			// If the error is not related to timeout or context, retry the query
 			if err != context.DeadlineExceeded && err != context.Canceled {
@@ -225,15 +360,16 @@ func runWorker(worker Worker) {
 		// If the query is ultimately successful, update counters
 		if err == nil {
 			worker.Stats.IncrementSuccessfulQueries()
-			common.IncrementSuccessfulRead(worker.Executor.GetSystemName())
+			common.IncrementSuccessfulRead(worker.Executor.GetSystemName(), string(queryType))
 
 			// Update statistics based on results
 			worker.Stats.AddHits(result.HitCount)
 			worker.Stats.AddBytesRead(result.BytesRead)
 
 			// Update Prometheus metrics
-			common.ResultHitsHistogram.WithLabelValues(worker.Executor.GetSystemName()).Observe(float64(result.HitCount))
-			common.ResultSizeHistogram.WithLabelValues(worker.Executor.GetSystemName()).Observe(float64(result.BytesRead))
+			normalizedSystem := common.NormalizeSystemName(worker.Executor.GetSystemName())
+			common.ResultHitsHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.HitCount))
+			common.ResultSizeHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.BytesRead))
 
 			// Output query information if verbose mode is enabled
 			if worker.Config.Verbose {
@@ -262,10 +398,8 @@ func runWorker(worker Worker) {
 					worker.ID, queryType, result.QueryString, timeRangeStr, limitStr, stepStr, result.HitCount, result.BytesRead, duration)
 			}
 		} else {
-			// Output error information
-			if worker.Config.Verbose {
-				fmt.Printf("[Worker %d] Query error %s: %v\n", worker.ID, queryType, err)
-			}
+			// Always log errors for diagnostics using structured logging
+			common.LogQueryError(worker.ID, string(queryType), worker.Executor.GetSystemName(), err, "")
 		}
 	}
 }
@@ -305,7 +439,7 @@ func randInt(min, max int) int {
 }
 
 func init() {
-	rand.Seed(time.Now().UnixNano())
+	// No need for rand.Seed since Go 1.20 - global generator is auto-seeded
 }
 
 // createExecutor creates a new query executor for the specified system
@@ -336,7 +470,7 @@ func main() {
 	serverHost := flag.String("host", "localhost", "Server host")
 	serverPort := flag.Int("port", 9200, "Server port")
 	system := flag.String("system", "elasticsearch", "Log system to query (elasticsearch, loki, victorialogs, etc)")
-	workersCount := flag.Int("workers", 2, "Number of query workers")
+	// workersCount flag removed - using runtime.NumCPU() * 4
 	intervalMillis := flag.Int("interval", 1000, "Query interval in milliseconds")
 	rps := flag.Int("rps", 0, "Requests per second (overrides interval if set)")
 	timeoutMs := flag.Int("timeout", 5000, "Query timeout in milliseconds")
@@ -418,7 +552,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Start workers
-	for i := 1; i <= *workersCount; i++ {
+	// Start workers based on CPU count
+	numWorkers := runtime.NumCPU() * 4
+	for i := 1; i <= numWorkers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()

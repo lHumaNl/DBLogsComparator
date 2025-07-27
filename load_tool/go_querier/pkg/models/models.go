@@ -49,8 +49,9 @@ type QueryExecutor interface {
 
 // Options settings for the query executor
 type Options struct {
-	Timeout    time.Duration
-	RetryCount int
-	RetryDelay time.Duration
-	Verbose    bool
+	Timeout         time.Duration
+	RetryCount      int
+	RetryDelay      time.Duration
+	Verbose         bool
+	ConnectionCount int // Number of HTTP connections for the pool
 }
