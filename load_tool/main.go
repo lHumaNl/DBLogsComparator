@@ -808,9 +808,9 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
-	// Create query executor for selected system
+	// Create query executor for selected system with time configuration
 	log.Printf("Debug: Creating query executor with system=%s, baseURL=%s", systemForExecutor, baseURL)
-	executor, err := go_querier.CreateQueryExecutor(systemForExecutor, baseURL, options, 1)
+	executor, err := go_querier.CreateQueryExecutorWithTimeConfig(systemForExecutor, baseURL, options, 1, &config.Querier.Times)
 	if err != nil {
 		return fmt.Errorf("error creating query executor: %v", err)
 	}

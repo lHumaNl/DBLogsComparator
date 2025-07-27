@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
+	queriercommon "github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/executors"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 
@@ -69,10 +70,10 @@ type Options struct {
 
 // QueryConfig configuration for the query module
 type QueryConfig struct {
-	Mode                  string
-	BaseURL               string
-	QPS                   int
-	DurationSeconds       int
+	Mode            string
+	BaseURL         string
+	QPS             int
+	DurationSeconds int
 	// WorkerCount removed - using runtime.NumCPU() * 4
 	QueryTypeDistribution map[models.QueryType]int
 	QueryTimeout          time.Duration
@@ -114,6 +115,20 @@ func CreateQueryExecutor(mode, baseURL string, options models.Options, workerID 
 		return executors.NewElasticsearchExecutor(baseURL, options), nil
 	case "loki":
 		return executors.NewLokiExecutor(baseURL, options), nil
+	default:
+		return nil, errors.New(fmt.Sprintf("unknown logging system: %s", mode))
+	}
+}
+
+// CreateQueryExecutorWithTimeConfig creates a query executor for the specified system with time configuration
+func CreateQueryExecutorWithTimeConfig(mode, baseURL string, options models.Options, workerID int, timeConfig *common.TimeRangeConfig) (models.QueryExecutor, error) {
+	switch mode {
+	case "victoria", "victorialogs":
+		return executors.NewVictoriaLogsExecutorWithTimeConfig(baseURL, options, workerID, timeConfig), nil
+	case "es", "elasticsearch", "elk":
+		return executors.NewElasticsearchExecutorWithTimeConfig(baseURL, options, timeConfig), nil
+	case "loki":
+		return executors.NewLokiExecutorWithTimeConfig(baseURL, options, timeConfig), nil
 	default:
 		return nil, errors.New(fmt.Sprintf("unknown logging system: %s", mode))
 	}
@@ -211,6 +226,18 @@ func processQuery(processorID int, stats *common.Stats, config QueryConfig, exec
 	// Select a random query type based on distribution
 	queryType := selectRandomQueryType(config.QueryTypeDistribution)
 
+	// Generate time range beforehand to have it for error metrics
+	timeRangeInfo := executor.GenerateTimeRange()
+	var timeStringRepr string
+
+	// Extract StringRepr from timeRange (all executors return the same type)
+	if timeRange, ok := timeRangeInfo.(queriercommon.TimeRange); ok {
+		timeStringRepr = timeRange.StringRepr
+	}
+	if timeStringRepr == "" {
+		timeStringRepr = "unknown"
+	}
+
 	// Generate query beforehand to have it for error logging
 	generatedQuery := executor.GenerateRandomQuery(queryType)
 	queryString := fmt.Sprintf("%v", generatedQuery)
@@ -228,14 +255,19 @@ func processQuery(processorID int, stats *common.Stats, config QueryConfig, exec
 	result, err := executor.ExecuteQuery(queryCtx, queryType)
 	duration := time.Since(startTime)
 
-	// Update metrics
-	common.ObserveReadDuration(executor.GetSystemName(), "attempt", duration.Seconds())
 	common.IncrementQueryType(executor.GetSystemName(), string(queryType))
 
 	if err == nil {
 		// Success - update metrics
 		stats.IncrementSuccessfulQueries()
 		common.IncrementSuccessfulRead(executor.GetSystemName(), string(queryType))
+
+		// Update metrics with time and type information
+		if result.TimeStringRepr != "" {
+			common.ObserveReadDurationWithTimeAndType(executor.GetSystemName(), "success", result.TimeStringRepr, string(queryType), duration.Seconds())
+		} else {
+			common.ObserveReadDurationWithTimeAndType(executor.GetSystemName(), "success", "unknown", string(queryType), duration.Seconds())
+		}
 
 		// Update statistics based on results
 		stats.AddHits(result.HitCount)
@@ -279,11 +311,19 @@ func processQuery(processorID int, stats *common.Stats, config QueryConfig, exec
 	// Query failed - no retries in querier
 	stats.IncrementFailedQueries()
 	common.IncrementFailedRead(executor.GetSystemName(), string(queryType), "query_error")
-	
+
+	// Update metrics with time and type information for failed query
+	// Use timeStringRepr generated beforehand, fallback to result if available
+	finalTimeStringRepr := timeStringRepr
+	if result.TimeStringRepr != "" {
+		finalTimeStringRepr = result.TimeStringRepr
+	}
+	common.ObserveReadDurationWithTimeAndType(executor.GetSystemName(), "failed", finalTimeStringRepr, string(queryType), duration.Seconds())
+
 	if config.Verbose {
 		fmt.Printf("Processor %d: Query failed for %s: %v\n", processorID, queryType, err)
 	}
-	
+
 	// Log error using structured logging with query string
 	// Use generated query string or result query string if available
 	finalQueryString := queryString
@@ -303,6 +343,18 @@ func runWorker(worker Worker) {
 		// Select a random query type based on distribution
 		queryType := selectRandomQueryType(worker.Config.QueryTypeDistribution)
 
+		// Generate time range beforehand to have it for error metrics
+		timeRangeInfo := worker.Executor.GenerateTimeRange()
+		var timeStringRepr string
+
+		// Extract StringRepr from timeRange (all executors return the same type)
+		if timeRange, ok := timeRangeInfo.(queriercommon.TimeRange); ok {
+			timeStringRepr = timeRange.StringRepr
+		}
+		if timeStringRepr == "" {
+			timeStringRepr = "unknown"
+		}
+
 		// Increment the total query counter
 		worker.Stats.IncrementTotalQueries()
 		common.IncrementReadRequests(worker.Executor.GetSystemName())
@@ -318,14 +370,20 @@ func runWorker(worker Worker) {
 		// Cancel the context
 		cancel()
 
-		// Update metrics
-		common.ObserveReadDuration(worker.Executor.GetSystemName(), "attempt", duration.Seconds())
 		common.IncrementQueryType(worker.Executor.GetSystemName(), string(queryType))
 
 		// Update counters based on the result
 		if err != nil {
 			worker.Stats.IncrementFailedQueries()
 			common.IncrementFailedRead(worker.Executor.GetSystemName(), string(queryType), "query_error")
+
+			// Update metrics with time and type information for failed query
+			// Use timeStringRepr generated beforehand, fallback to result if available
+			finalTimeStringRepr := timeStringRepr
+			if result.TimeStringRepr != "" {
+				finalTimeStringRepr = result.TimeStringRepr
+			}
+			common.ObserveReadDurationWithTimeAndType(worker.Executor.GetSystemName(), "failed", finalTimeStringRepr, string(queryType), duration.Seconds())
 
 			// If the error is not related to timeout or context, retry the query
 			if err != context.DeadlineExceeded && err != context.Canceled {
@@ -346,12 +404,18 @@ func runWorker(worker Worker) {
 					// Cancel the context
 					retryCancel()
 
-					// Update metrics
-					common.ObserveReadDuration(worker.Executor.GetSystemName(), "retry", retryDuration.Seconds())
+					// Update metrics with time and type information
+					// Use timeStringRepr generated beforehand, fallback to result if available
+					retryFinalTimeStringRepr := timeStringRepr
+					if result.TimeStringRepr != "" {
+						retryFinalTimeStringRepr = result.TimeStringRepr
+					}
 
-					// If the query is successful, break the retry loop
 					if err == nil {
+						common.ObserveReadDurationWithTimeAndType(worker.Executor.GetSystemName(), "success", retryFinalTimeStringRepr, string(queryType), retryDuration.Seconds())
 						break
+					} else {
+						common.ObserveReadDurationWithTimeAndType(worker.Executor.GetSystemName(), "failed", retryFinalTimeStringRepr, string(queryType), retryDuration.Seconds())
 					}
 				}
 			}
@@ -361,6 +425,14 @@ func runWorker(worker Worker) {
 		if err == nil {
 			worker.Stats.IncrementSuccessfulQueries()
 			common.IncrementSuccessfulRead(worker.Executor.GetSystemName(), string(queryType))
+
+			// Update metrics with time and type information for successful query (if not already done in retry)
+			// Use timeStringRepr generated beforehand, fallback to result if available
+			successFinalTimeStringRepr := timeStringRepr
+			if result.TimeStringRepr != "" {
+				successFinalTimeStringRepr = result.TimeStringRepr
+			}
+			common.ObserveReadDurationWithTimeAndType(worker.Executor.GetSystemName(), "success", successFinalTimeStringRepr, string(queryType), duration.Seconds())
 
 			// Update statistics based on results
 			worker.Stats.AddHits(result.HitCount)

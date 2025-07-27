@@ -3,14 +3,22 @@ package common
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
+	"strings"
 	"time"
+
+	config "github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 )
 
 // TimeRange represents a time range for log queries
 type TimeRange struct {
-	Start       time.Time
-	End         time.Time
-	Description string
+	Start          time.Time
+	End            time.Time
+	Description    string
+	StringRepr     string // String representation for metrics (e.g., "Last 1h", "15m - 1h")
+	IsCustom       bool   // Whether this is a custom range
+	LeftOffsetMin  int    // Left border offset in minutes (for custom ranges)
+	RightOffsetMin int    // Right border offset in minutes (for custom ranges)
 }
 
 // TimeRangeType defines the type of time range to generate
@@ -30,12 +38,21 @@ const (
 // TimeRangeGenerator generates time ranges for log queries
 type TimeRangeGenerator struct {
 	currentTime time.Time
+	timeConfig  *config.TimeRangeConfig // Configuration for time ranges
 }
 
 // NewTimeRangeGenerator creates a new TimeRangeGenerator
 func NewTimeRangeGenerator() *TimeRangeGenerator {
 	return &TimeRangeGenerator{
 		currentTime: time.Now(),
+	}
+}
+
+// NewTimeRangeGeneratorWithConfig creates a new TimeRangeGenerator with configuration
+func NewTimeRangeGeneratorWithConfig(timeConfig *config.TimeRangeConfig) *TimeRangeGenerator {
+	return &TimeRangeGenerator{
+		currentTime: time.Now(),
+		timeConfig:  timeConfig,
 	}
 }
 
@@ -73,6 +90,146 @@ func (g *TimeRangeGenerator) GenerateRandomTimeRange() TimeRange {
 	return g.GenerateTimeRange(rangeType)
 }
 
+// GenerateConfiguredTimeRange generates a time range based on configuration weights
+func (g *TimeRangeGenerator) GenerateConfiguredTimeRange() TimeRange {
+	if g.timeConfig == nil {
+		// Fallback to random generation if no config
+		return g.GenerateRandomTimeRange()
+	}
+
+	// Calculate total weight for all time ranges
+	totalWeight := g.timeConfig.Last5m + g.timeConfig.Last15m + g.timeConfig.Last30m +
+		g.timeConfig.Last1h + g.timeConfig.Last2h + g.timeConfig.Last4h + g.timeConfig.Last8h +
+		g.timeConfig.Last12h + g.timeConfig.Last24h + g.timeConfig.Last48h + g.timeConfig.Last72h
+
+	// Add custom range weights
+	customWeight := 0.0
+	for _, weight := range g.timeConfig.Custom.PercentsOffsetLeftBorder {
+		customWeight += weight
+	}
+	totalWeight += customWeight
+
+	// Generate random number
+	randomValue := rand.Float64() * totalWeight
+	currentWeight := 0.0
+
+	// Check predefined ranges
+	predefinedRanges := []struct {
+		weight   float64
+		duration time.Duration
+		name     string
+	}{
+		{g.timeConfig.Last5m, 5 * time.Minute, "Last 5m"},
+		{g.timeConfig.Last15m, 15 * time.Minute, "Last 15m"},
+		{g.timeConfig.Last30m, 30 * time.Minute, "Last 30m"},
+		{g.timeConfig.Last1h, 1 * time.Hour, "Last 1h"},
+		{g.timeConfig.Last2h, 2 * time.Hour, "Last 2h"},
+		{g.timeConfig.Last4h, 4 * time.Hour, "Last 4h"},
+		{g.timeConfig.Last8h, 8 * time.Hour, "Last 8h"},
+		{g.timeConfig.Last12h, 12 * time.Hour, "Last 12h"},
+		{g.timeConfig.Last24h, 24 * time.Hour, "Last 24h"},
+		{g.timeConfig.Last48h, 48 * time.Hour, "Last 48h"},
+		{g.timeConfig.Last72h, 72 * time.Hour, "Last 72h"},
+	}
+
+	for _, rangeInfo := range predefinedRanges {
+		currentWeight += rangeInfo.weight
+		if randomValue <= currentWeight {
+			end := g.currentTime
+			start := end.Add(-rangeInfo.duration)
+			return TimeRange{
+				Start:       start,
+				End:         end,
+				Description: rangeInfo.name,
+				StringRepr:  rangeInfo.name,
+				IsCustom:    false,
+			}
+		}
+	}
+
+	// If we reach here, generate custom range
+	return g.generateConfiguredCustomTimeRange()
+}
+
+// generateConfiguredCustomTimeRange generates a custom time range based on configuration
+func (g *TimeRangeGenerator) generateConfiguredCustomTimeRange() TimeRange {
+	// Select left border offset
+	leftOffsetStr := g.selectWeightedDuration(g.timeConfig.Custom.PercentsOffsetLeftBorder)
+	leftOffsetMin := g.parseDurationToMinutes(leftOffsetStr)
+
+	// Select right border offset
+	rightOffsetStr := g.selectWeightedDuration(g.timeConfig.Custom.PercentsOffsetRightBorder)
+	rightOffsetMin := g.parseDurationToMinutes(rightOffsetStr)
+
+	// Calculate actual times
+	end := g.currentTime
+	start := end.Add(-time.Duration(leftOffsetMin) * time.Minute)
+	actualEnd := start.Add(time.Duration(rightOffsetMin) * time.Minute)
+
+	// Ensure we don't go beyond current time
+	if actualEnd.After(g.currentTime) {
+		actualEnd = g.currentTime
+	}
+
+	stringRepr := fmt.Sprintf("Custom %s - %s", leftOffsetStr, rightOffsetStr)
+
+	return TimeRange{
+		Start:          start,
+		End:            actualEnd,
+		Description:    stringRepr,
+		StringRepr:     stringRepr,
+		IsCustom:       true,
+		LeftOffsetMin:  leftOffsetMin,
+		RightOffsetMin: rightOffsetMin,
+	}
+}
+
+// selectWeightedDuration selects a duration based on weights
+func (g *TimeRangeGenerator) selectWeightedDuration(weightMap map[string]float64) string {
+	totalWeight := 0.0
+	for _, weight := range weightMap {
+		totalWeight += weight
+	}
+
+	randomValue := rand.Float64() * totalWeight
+	currentWeight := 0.0
+
+	for duration, weight := range weightMap {
+		currentWeight += weight
+		if randomValue <= currentWeight {
+			return duration
+		}
+	}
+
+	// Fallback - return first available duration
+	for duration := range weightMap {
+		return duration
+	}
+	return "1h" // Ultimate fallback
+}
+
+// parseDurationToMinutes converts duration string to minutes
+func (g *TimeRangeGenerator) parseDurationToMinutes(durationStr string) int {
+	durationStr = strings.ToLower(strings.TrimSpace(durationStr))
+
+	if strings.HasSuffix(durationStr, "m") {
+		if val, err := strconv.Atoi(strings.TrimSuffix(durationStr, "m")); err == nil {
+			return val
+		}
+	} else if strings.HasSuffix(durationStr, "h") {
+		if val, err := strconv.Atoi(strings.TrimSuffix(durationStr, "h")); err == nil {
+			return val * 60
+		}
+	}
+
+	// Fallback - try to parse as number (assume minutes)
+	if val, err := strconv.Atoi(durationStr); err == nil {
+		return val
+	}
+
+	return 60 // Default to 1 hour if parsing fails
+}
+
 // generateRelativeTimeRange creates time ranges like "Last 15min", "Last 1h"
 func (g *TimeRangeGenerator) generateRelativeTimeRange() TimeRange {
 	// Define possible durations in minutes
@@ -99,6 +256,8 @@ func (g *TimeRangeGenerator) generateRelativeTimeRange() TimeRange {
 		Start:       start,
 		End:         end,
 		Description: description,
+		StringRepr:  description,
+		IsCustom:    false,
 	}
 }
 
@@ -151,10 +310,19 @@ func (g *TimeRangeGenerator) generateAbsoluteTimeRange() TimeRange {
 		end.Hour(), end.Minute(),
 	)
 
+	// Calculate offsets for string representation
+	leftOffsetMin := int(g.currentTime.Sub(start).Minutes())
+	rightOffsetMin := int(end.Sub(start).Minutes())
+	stringRepr := fmt.Sprintf("Left border offset %d - Right border offset %d", leftOffsetMin, rightOffsetMin)
+
 	return TimeRange{
-		Start:       start,
-		End:         end,
-		Description: description,
+		Start:          start,
+		End:            end,
+		Description:    description,
+		StringRepr:     stringRepr,
+		IsCustom:       true,
+		LeftOffsetMin:  leftOffsetMin,
+		RightOffsetMin: rightOffsetMin,
 	}
 }
 
@@ -206,6 +374,8 @@ func (g *TimeRangeGenerator) generateTodayTimeRange() TimeRange {
 		Start:       start,
 		End:         end,
 		Description: description,
+		StringRepr:  description,
+		IsCustom:    false,
 	}
 }
 
@@ -248,6 +418,8 @@ func (g *TimeRangeGenerator) generateYesterdayTimeRange() TimeRange {
 		Start:       start,
 		End:         end,
 		Description: description,
+		StringRepr:  description,
+		IsCustom:    false,
 	}
 }
 
@@ -280,16 +452,16 @@ func GetUniqueRandomQuantiles(count int) []float64 {
 	if count > len(quantiles) {
 		count = len(quantiles)
 	}
-	
+
 	// Shuffle the slice and take first 'count' elements
 	shuffled := make([]float64, len(quantiles))
 	copy(shuffled, quantiles)
-	
+
 	for i := len(shuffled) - 1; i > 0; i-- {
 		j := rand.Intn(i + 1)
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	}
-	
+
 	return shuffled[:count]
 }
 

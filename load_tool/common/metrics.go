@@ -84,11 +84,18 @@ var (
 		Help: "Number of retried read requests",
 	}, []string{"system", "retry_attempt"})
 
-	ReadDurationHistogram = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "dblogscomp_read_duration_seconds",
-		Help:    "Histogram of read request execution times",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // from 1ms to ~16s
-	}, []string{"system", "status"})
+	ReadDurationSummary = promauto.NewSummaryVec(prometheus.SummaryOpts{
+		Name: "dblogscomp_read_duration_seconds",
+		Help: "Summary of read request execution times",
+		Objectives: map[float64]float64{
+			0.5:  0.05,  // 50-й процентиль с точностью ±5%
+			0.75: 0.05,  // 75-й процентиль с точностью ±5%
+			0.9:  0.01,  // 90-й процентиль с точностью ±1%
+			0.95: 0.01,  // 95-й процентиль с точностью ±1%
+			0.99: 0.001, // 99-й процентиль с точностью ±0.1%
+		},
+		MaxAge: time.Minute * 5, // окно наблюдения 5 минут
+	}, []string{"system", "status", "str_time", "type"})
 
 	QueryTypeCounter = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_querier_query_type_total", // renamed for clarity
@@ -147,12 +154,6 @@ var (
 		Name: "dblogscomp_error_total",
 		Help: "Number of errors by type",
 	}, []string{"error_type", "operation", "system"})
-
-	SystemLatencyHistogram = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "dblogscomp_system_latency_seconds",
-		Help:    "Comparison of latency between different logging systems",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
-	}, []string{"system", "operation_type"})
 
 	ResourceUsageGauge = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "dblogscomp_resource_usage",
@@ -329,7 +330,6 @@ func ObserveWriteDuration(system, status string, duration float64) {
 	}
 	normalizedSystem := normalizeSystemName(system)
 	WriteDurationHistogram.WithLabelValues(normalizedSystem, status).Observe(duration)
-	SystemLatencyHistogram.WithLabelValues(normalizedSystem, "write").Observe(duration)
 }
 
 // ObserveReadDuration records the execution time of a read request
@@ -343,8 +343,28 @@ func ObserveReadDuration(system, status string, duration float64) {
 		status = "unknown"
 	}
 	normalizedSystem := normalizeSystemName(system)
-	ReadDurationHistogram.WithLabelValues(normalizedSystem, status).Observe(duration)
-	SystemLatencyHistogram.WithLabelValues(normalizedSystem, "read").Observe(duration)
+	ReadDurationSummary.WithLabelValues(normalizedSystem, status, "", "").Observe(duration)
+}
+
+// ObserveReadDurationWithTimeAndType records the execution time of a read request with time range and query type info
+// system - logging system name, status - request status (success/failure)
+// strTime - string representation of time range (e.g., "Last 1h", "Left border offset 120 - Right border offset 60")
+// queryType - query type (simple, complex, analytical, etc.)
+func ObserveReadDurationWithTimeAndType(system, status, strTime, queryType string, duration float64) {
+	if system == "" {
+		system = "unknown"
+	}
+	if status == "" {
+		status = "unknown"
+	}
+	if strTime == "" {
+		strTime = "unknown"
+	}
+	if queryType == "" {
+		queryType = "unknown"
+	}
+	normalizedSystem := normalizeSystemName(system)
+	ReadDurationSummary.WithLabelValues(normalizedSystem, status, strTime, queryType).Observe(duration)
 }
 
 // IncrementQueryType increases the counter of queries by type

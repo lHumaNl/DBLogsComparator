@@ -2007,7 +2007,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 88
+            "y": 4
           },
           "id": 16,
           "options": {
@@ -2102,7 +2102,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 88
+            "y": 4
           },
           "id": 18,
           "options": {
@@ -2191,7 +2191,7 @@
             "h": 12,
             "w": 12,
             "x": 0,
-            "y": 21
+            "y": 5
           },
           "id": 21,
           "options": {
@@ -2264,7 +2264,7 @@
             "h": 12,
             "w": 12,
             "x": 12,
-            "y": 21
+            "y": 5
           },
           "id": 22,
           "options": {
@@ -2368,7 +2368,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 33
+            "y": 17
           },
           "id": 23,
           "options": {
@@ -2465,7 +2465,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -2531,7 +2532,7 @@
             "h": 10,
             "w": 12,
             "x": 0,
-            "y": 22
+            "y": 6
           },
           "id": 25,
           "options": {
@@ -2614,7 +2615,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -2634,7 +2636,7 @@
             "h": 10,
             "w": 12,
             "x": 12,
-            "y": 22
+            "y": 6
           },
           "id": 26,
           "options": {
@@ -2661,162 +2663,13 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, rate(dblogscomp_write_duration_seconds_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
-              "legendFormat": "{{status}} (p95) - {{system}}",
+              "expr": "histogram_quantile($percentile, rate(dblogscomp_write_duration_seconds_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
+              "legendFormat": "{{status}} ($percentile) - {{system}}",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Write Response Time by Status (p95)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "description": "Average read/query response time per system. Lower values indicate better query performance. Calculated as total time divided by request count.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "yellow",
-                    "value": 0.05
-                  },
-                  {
-                    "color": "red",
-                    "value": 0.2
-                  }
-                ]
-              },
-              "unit": "s"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "elasticsearch"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "green",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "loki"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "blue",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "victorialogs"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "orange",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 12,
-            "x": 0,
-            "y": 32
-          },
-          "id": 27,
-          "options": {
-            "legend": {
-              "calcs": [
-                "min",
-                "max",
-                "mean",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "rate(dblogscomp_read_duration_seconds_sum{job=~\"$job\", system=~\"$system\"}[$interval]) / rate(dblogscomp_read_duration_seconds_count{job=~\"$job\", system=~\"$system\"}[$interval])",
-              "legendFormat": "{{system}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Read Response Time (Average)",
+          "title": "Write Response Time by Status ($percentile)",
           "type": "timeseries"
         },
         {
@@ -2866,7 +2719,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -2884,9 +2738,9 @@
           },
           "gridPos": {
             "h": 10,
-            "w": 12,
-            "x": 12,
-            "y": 32
+            "w": 24,
+            "x": 0,
+            "y": 16
           },
           "id": 28,
           "options": {
@@ -2898,7 +2752,7 @@
                 "lastNotNull"
               ],
               "displayMode": "table",
-              "placement": "bottom",
+              "placement": "right",
               "showLegend": true
             },
             "tooltip": {
@@ -2913,13 +2767,117 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.95, rate(dblogscomp_read_duration_seconds_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
-              "legendFormat": "{{status}} (p95) - {{system}}",
+              "expr": "dblogscomp_read_duration_seconds{job=~\"$job\", system=~\"$system\", status=\"success\", quantile=\"$percentile\"}",
+              "legendFormat": "{{system}} - {{type}} - {{str_time}}",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Read Response Time by Status (p95)",
+          "title": "Read Success Response Time by Status ($percentile)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "95th percentile read response time by status and system. Shows worst-case query performance. High values may indicate complex queries or system overload.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.1
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.5
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 26
+          },
+          "id": 55,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "dblogscomp_read_duration_seconds{job=~\"$job\", system=~\"$system\", status!=\"success\", quantile=\"$percentile\"}",
+              "legendFormat": "{{system}} - {{type}} - {{str_time}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Read Failed Response Time by Status ($percentile)",
           "type": "timeseries"
         }
       ],
@@ -2936,318 +2894,6 @@
       },
       "id": 29,
       "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "description": "Median number of hits returned by queries per system. Indicates typical query result size. Higher values may indicate broader search criteria or larger datasets.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              },
-              "unit": "short"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "elasticsearch"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "green",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "loki"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "blue",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "victorialogs"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "orange",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 12,
-            "w": 24,
-            "x": 0,
-            "y": 7
-          },
-          "id": 30,
-          "options": {
-            "legend": {
-              "calcs": [
-                "min",
-                "max",
-                "mean",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.50, rate(dblogscomp_querier_result_hits_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
-              "legendFormat": "{{system}} - {{type}} (p50)",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.95, rate(dblogscomp_querier_result_hits_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
-              "legendFormat": "{{system}} - {{type}} (p95)",
-              "range": true,
-              "refId": "B"
-            }
-          ],
-          "title": "Query Result Hits (Total)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "description": "Median size of query results in bytes per system. Indicates typical network overhead and data transfer volume. Higher values may impact network performance.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "yellow",
-                    "value": 65536
-                  },
-                  {
-                    "color": "red",
-                    "value": 262144
-                  }
-                ]
-              },
-              "unit": "bytes"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "elasticsearch"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "green",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "loki"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "blue",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "victorialogs"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "orange",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 13,
-            "w": 24,
-            "x": 0,
-            "y": 19
-          },
-          "id": 32,
-          "options": {
-            "legend": {
-              "calcs": [
-                "min",
-                "max",
-                "mean",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.50, rate(dblogscomp_querier_result_size_bytes_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
-              "legendFormat": "{{system}} - {{type}} (p50)",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.95, rate(dblogscomp_querier_result_size_bytes_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
-              "legendFormat": "{{system}} - {{type}} (p95)",
-              "range": true,
-              "refId": "B"
-            }
-          ],
-          "title": "Query Result Bytes (Total)",
-          "type": "timeseries"
-        },
         {
           "datasource": {
             "type": "prometheus",
@@ -3295,7 +2941,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -3307,7 +2954,7 @@
             "h": 14,
             "w": 24,
             "x": 0,
-            "y": 32
+            "y": 7
           },
           "id": 31,
           "options": {
@@ -3390,7 +3037,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -3402,7 +3050,7 @@
             "h": 14,
             "w": 24,
             "x": 0,
-            "y": 46
+            "y": 21
           },
           "id": 33,
           "options": {
@@ -3436,6 +3084,199 @@
             }
           ],
           "title": "Query Result Bytes by Type (Average)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Average number of hits returned by queries, broken down by query type and system. Shows which query types typically return more results. Useful for understanding query efficiency.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 5,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 24,
+            "x": 0,
+            "y": 35
+          },
+          "id": 57,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile($percentile, rate(dblogscomp_querier_result_hits_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
+              "hide": false,
+              "legendFormat": "{{system}} - {{type}} ($percentile)",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Query Result Hits by Type ($percentile)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Average size of query results in bytes, broken down by query type and system. Shows which query types transfer more data. Important for bandwidth planning.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 5,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 24,
+            "x": 0,
+            "y": 49
+          },
+          "id": 56,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile($percentile, rate(dblogscomp_querier_result_size_bytes_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
+              "legendFormat": "{{system}} - {{type}} ($percentile)",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Query Result Bytes by Type ($percentile)",
           "type": "timeseries"
         }
       ],
@@ -3832,7 +3673,7 @@
             "h": 4,
             "w": 6,
             "x": 0,
-            "y": 25
+            "y": 9
           },
           "id": 40,
           "options": {
@@ -3905,7 +3746,7 @@
             "h": 4,
             "w": 6,
             "x": 6,
-            "y": 25
+            "y": 9
           },
           "id": 41,
           "options": {
@@ -3976,7 +3817,7 @@
             "h": 4,
             "w": 6,
             "x": 12,
-            "y": 25
+            "y": 9
           },
           "id": 42,
           "options": {
@@ -4047,7 +3888,7 @@
             "h": 4,
             "w": 6,
             "x": 18,
-            "y": 25
+            "y": 9
           },
           "id": 43,
           "options": {
@@ -4149,7 +3990,7 @@
             "h": 9,
             "w": 12,
             "x": 0,
-            "y": 29
+            "y": 13
           },
           "id": 44,
           "options": {
@@ -4278,7 +4119,7 @@
             "h": 9,
             "w": 12,
             "x": 12,
-            "y": 29
+            "y": 13
           },
           "id": 45,
           "options": {
@@ -4392,7 +4233,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 38
+            "y": 22
           },
           "id": 46,
           "options": {
@@ -4495,7 +4336,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 38
+            "y": 22
           },
           "id": 47,
           "options": {
@@ -4626,7 +4467,7 @@
             "h": 10,
             "w": 24,
             "x": 0,
-            "y": 46
+            "y": 30
           },
           "id": 48,
           "options": {
@@ -4700,7 +4541,7 @@
       "type": "row"
     }
   ],
-  "refresh": "",
+  "refresh": false,
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
@@ -4710,7 +4551,7 @@
     "list": [
       {
         "current": {
-          "selected": true,
+          "selected": false,
           "text": "default",
           "value": "default"
         },
@@ -4729,9 +4570,13 @@
       },
       {
         "current": {
-          "selected": false,
-          "text": "All",
-          "value": "$__all"
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         },
         "datasource": {
           "type": "prometheus",
@@ -4753,9 +4598,13 @@
       },
       {
         "current": {
-          "selected": false,
-          "text": "All",
-          "value": "$__all"
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         },
         "datasource": {
           "type": "prometheus",
@@ -4777,9 +4626,9 @@
       },
       {
         "current": {
-          "selected": false,
-          "text": "5m",
-          "value": "5m"
+          "selected": true,
+          "text": "1m",
+          "value": "1m"
         },
         "hide": 0,
         "includeAll": false,
@@ -4788,7 +4637,7 @@
         "name": "interval",
         "options": [
           {
-            "selected": false,
+            "selected": true,
             "text": "1m",
             "value": "1m"
           },
@@ -4798,7 +4647,7 @@
             "value": "2m"
           },
           {
-            "selected": true,
+            "selected": false,
             "text": "5m",
             "value": "5m"
           },
@@ -4814,22 +4663,66 @@
           }
         ],
         "query": "1m,2m,5m,10m,15m",
+        "queryValue": "",
         "refresh": 0,
         "regex": "",
         "skipUrlSync": false,
         "sort": 0,
         "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "0.75",
+          "value": "0.75"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Percentile",
+        "multi": false,
+        "name": "percentile",
+        "options": [
+          {
+            "selected": false,
+            "text": "0.5",
+            "value": "0.5"
+          },
+          {
+            "selected": true,
+            "text": "0.75",
+            "value": "0.75"
+          },
+          {
+            "selected": false,
+            "text": "0.9",
+            "value": "0.9"
+          },
+          {
+            "selected": false,
+            "text": "0.95",
+            "value": "0.95"
+          },
+          {
+            "selected": false,
+            "text": "0.99",
+            "value": "0.99"
+          }
+        ],
+        "query": "0.5, 0.75, 0.9, 0.95, 0.99",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
       }
     ]
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "LogGenerator Metrics",
   "uid": "go-log-generator",
-  "version": 8,
+  "version": 21,
   "weekStart": ""
 }

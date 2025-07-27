@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
-	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	queriercommon "github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
@@ -34,7 +34,7 @@ type LokiExecutor struct {
 	availableLabels []string
 
 	// Time range generator for realistic queries
-	// timeRangeGenerator *common.TimeRangeGenerator
+	timeRangeGenerator *queriercommon.TimeRangeGenerator
 
 	// Thread-safe random generator
 	rng      *rand.Rand
@@ -57,13 +57,39 @@ func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
 	}
 
 	executor := &LokiExecutor{
-		BaseURL:         baseURL,
-		Options:         options,
-		ClientPool:      clientPool,
-		labelCache:      labelCache,
-		availableLabels: availableLabels,
-		// timeRangeGenerator: queriercommon.NewTimeRangeGenerator(),
-		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
+		BaseURL:            baseURL,
+		Options:            options,
+		ClientPool:         clientPool,
+		labelCache:         labelCache,
+		availableLabels:    availableLabels,
+		timeRangeGenerator: queriercommon.NewTimeRangeGenerator(),
+		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+
+	return executor
+}
+
+// NewLokiExecutorWithTimeConfig creates a new Loki executor with time configuration
+func NewLokiExecutorWithTimeConfig(baseURL string, options models.Options, timeConfig *common.TimeRangeConfig) *LokiExecutor {
+	// Create HTTP client pool with dynamic connection count
+	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
+	// Initialize with static labels from our common data package
+	availableLabels := logdata.CommonLabels
+	// Initialize label cache with static values
+	labelCache := make(map[string][]string)
+	labelValuesMap := logdata.GetLabelValuesMap()
+	for label, values := range labelValuesMap {
+		labelCache[label] = values
+	}
+
+	executor := &LokiExecutor{
+		BaseURL:            baseURL,
+		Options:            options,
+		ClientPool:         clientPool,
+		labelCache:         labelCache,
+		availableLabels:    availableLabels,
+		timeRangeGenerator: queriercommon.NewTimeRangeGeneratorWithConfig(timeConfig),
+		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	return executor
@@ -81,13 +107,31 @@ func (e *LokiExecutor) GetSystemName() string {
 	return "loki"
 }
 
+// GenerateTimeRange generates a time range for queries (for error handling)
+func (e *LokiExecutor) GenerateTimeRange() interface{} {
+	return e.timeRangeGenerator.GenerateConfiguredTimeRange()
+}
+
 // ExecuteQuery executes a query of the specified type in Loki
 func (e *LokiExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryType) (models.QueryResult, error) {
-	// Generate a query of the specified type
-	queryInfo := e.GenerateRandomQuery(queryType).(map[string]string)
+	// Generate time range for the query using the configured TimeRangeGenerator
+	timeRange := e.timeRangeGenerator.GenerateConfiguredTimeRange()
+
+	// Generate a query of the specified type with the time range
+	queryInfo := e.GenerateRandomQueryWithTimeRange(queryType, timeRange).(map[string]string)
 
 	// Execute the query against Loki
-	return e.executeLokiQuery(queryInfo)
+	result, err := e.executeLokiQuery(queryInfo)
+	if err != nil {
+		return models.QueryResult{}, err
+	}
+
+	// Populate time information in the result
+	result.StartTime = timeRange.Start
+	result.EndTime = timeRange.End
+	result.TimeStringRepr = timeRange.StringRepr
+
+	return result, nil
 }
 
 // GetLabelValues retrieves label values from static data or cache
@@ -113,18 +157,15 @@ func (e *LokiExecutor) GetLabelValues(ctx context.Context, label string) ([]stri
 }
 
 // GenerateRandomQuery creates a random query of the specified type for Loki
+// For compatibility, generates a time range internally
 func (e *LokiExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	// Generate time range for the query
-	// timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
-	// Use a simple time range for now
-	now := time.Now()
-	timeRange := struct {
-		Start time.Time
-		End   time.Time
-	}{
-		Start: now.Add(-1 * time.Hour),
-		End:   now,
-	}
+	// Generate time range for the query using the configured generator
+	timeRange := e.timeRangeGenerator.GenerateConfiguredTimeRange()
+	return e.GenerateRandomQueryWithTimeRange(queryType, timeRange)
+}
+
+// GenerateRandomQueryWithTimeRange creates a random query with a specific time range for Loki
+func (e *LokiExecutor) GenerateRandomQueryWithTimeRange(queryType models.QueryType, timeRange queriercommon.TimeRange) interface{} {
 	startTimeStr := queriercommon.FormatTimeForLoki(timeRange.Start)
 	endTimeStr := queriercommon.FormatTimeForLoki(timeRange.End)
 
@@ -382,7 +423,7 @@ func (e *LokiExecutor) generateAnalyticalQuery() string {
 			// For _over_time functions, use proper LogQL unwrap syntax
 			if aggFunc == "quantile_over_time" {
 				// quantile_over_time requires a quantile parameter
-				quantile := common.GetRandomQuantile()
+				quantile := queriercommon.GetRandomQuantile()
 				expression = fmt.Sprintf("%s(%s, (%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s])",
 					aggFunc,
 					quantile,
@@ -561,7 +602,7 @@ func (e *LokiExecutor) generateStatQuery(availableLabels []string) string {
 
 		if timeWindowFunc == "quantile_over_time" {
 			// quantile_over_time requires a quantile parameter
-			quantile := common.GetRandomQuantile()
+			quantile := queriercommon.GetRandomQuantile()
 			expression = fmt.Sprintf("%s(%s(%s, (%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s]))",
 				aggregationFunc,
 				timeWindowFunc,
@@ -725,14 +766,15 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 
 	// Create the result
 	result := models.QueryResult{
-		Duration:    time.Since(startTime),
-		RawResponse: bodyBytes,
-		BytesRead:   int64(len(bodyBytes)),
-		Status:      "success",
-		QueryString: queryInfo["query"],
-		StartTime:   startTimeObj,
-		EndTime:     endTimeObj,
-		Limit:       queryInfo["limit"],
+		Duration:       time.Since(startTime),
+		RawResponse:    bodyBytes,
+		BytesRead:      int64(len(bodyBytes)),
+		Status:         "success",
+		QueryString:    queryInfo["query"],
+		StartTime:      startTimeObj,
+		EndTime:        endTimeObj,
+		Limit:          queryInfo["limit"],
+		TimeStringRepr: "", // Will be updated in querier.go
 	}
 
 	// Extract the result type

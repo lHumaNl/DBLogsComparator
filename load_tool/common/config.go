@@ -50,6 +50,28 @@ type GeneratorConfig struct {
 	Verbose      bool           `yaml:"verbose"`
 }
 
+// TimeRangeConfig - configuration for time ranges
+type TimeRangeConfig struct {
+	Last5m  float64               `yaml:"last5m"`
+	Last15m float64               `yaml:"last15m"`
+	Last30m float64               `yaml:"last30m"`
+	Last1h  float64               `yaml:"last1h"`
+	Last2h  float64               `yaml:"last2h"`
+	Last4h  float64               `yaml:"last4h"`
+	Last8h  float64               `yaml:"last8h"`
+	Last12h float64               `yaml:"last12h"`
+	Last24h float64               `yaml:"last24h"`
+	Last48h float64               `yaml:"last48h"`
+	Last72h float64               `yaml:"last72h"`
+	Custom  CustomTimeRangeConfig `yaml:"custom"`
+}
+
+// CustomTimeRangeConfig - configuration for custom time ranges
+type CustomTimeRangeConfig struct {
+	PercentsOffsetLeftBorder  map[string]float64 `yaml:"percents_offset_left_border"`
+	PercentsOffsetRightBorder map[string]float64 `yaml:"percents_offset_right_border"`
+}
+
 // QuerierConfig - query component configuration
 type QuerierConfig struct {
 	URLLoki     string         `yaml:"urlLoki"`
@@ -59,11 +81,12 @@ type QuerierConfig struct {
 	Stability   LoadTestConfig `yaml:"stability"`
 	RPS         int            `yaml:"rps,omitempty"` // Legacy field, kept for compatibility
 	// WorkerCount removed - now using runtime.NumCPU() * 4 async processors
-	MaxRetries   int            `yaml:"maxRetries"`
-	RetryDelayMs int            `yaml:"retryDelayMs"`
-	TimeoutMs    int            `yaml:"timeoutMs"` // HTTP request timeout in milliseconds
-	Verbose      bool           `yaml:"verbose"`
-	Distribution map[string]int `yaml:"distribution"`
+	MaxRetries   int             `yaml:"maxRetries"`
+	RetryDelayMs int             `yaml:"retryDelayMs"`
+	TimeoutMs    int             `yaml:"timeoutMs"` // HTTP request timeout in milliseconds
+	Verbose      bool            `yaml:"verbose"`
+	Distribution map[string]int  `yaml:"distribution"`
+	Times        TimeRangeConfig `yaml:"times"`
 }
 
 // HostsConfig contains URLs of logging systems

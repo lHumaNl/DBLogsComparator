@@ -12,9 +12,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
-	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
+	queriercommon "github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
@@ -32,7 +33,7 @@ type ElasticsearchExecutor struct {
 	availableLabels []string
 
 	// Time range generator for realistic queries
-	timeRangeGenerator *common.TimeRangeGenerator
+	timeRangeGenerator *queriercommon.TimeRangeGenerator
 }
 
 // ESSearchResponse represents the response from Elasticsearch
@@ -87,7 +88,30 @@ func NewElasticsearchExecutor(baseURL string, options models.Options) *Elasticse
 		IndexName:          "logs-*", // Using a mask for all log indices
 		labelCache:         labelCache,
 		availableLabels:    availableLabels,
-		timeRangeGenerator: common.NewTimeRangeGenerator(),
+		timeRangeGenerator: queriercommon.NewTimeRangeGenerator(),
+	}
+}
+
+// NewElasticsearchExecutorWithTimeConfig creates a new Elasticsearch executor with time configuration
+func NewElasticsearchExecutorWithTimeConfig(baseURL string, options models.Options, timeConfig *common.TimeRangeConfig) *ElasticsearchExecutor {
+	// Create HTTP client pool with dynamic connection count
+	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
+	// Initialize with static labels from our common data package
+	availableLabels := logdata.CommonLabels
+	// Initialize label cache with static values
+	labelCache := make(map[string][]string)
+	labelValuesMap := logdata.GetLabelValuesMap()
+	for label, values := range labelValuesMap {
+		labelCache[label] = values
+	}
+	return &ElasticsearchExecutor{
+		BaseURL:            baseURL,
+		ClientPool:         clientPool,
+		Options:            options,
+		IndexName:          "logs-*", // Using a mask for all log indices
+		labelCache:         labelCache,
+		availableLabels:    availableLabels,
+		timeRangeGenerator: queriercommon.NewTimeRangeGeneratorWithConfig(timeConfig),
 	}
 }
 
@@ -96,10 +120,18 @@ func (e *ElasticsearchExecutor) GetSystemName() string {
 	return "elasticsearch"
 }
 
+// GenerateTimeRange generates a time range for queries (for error handling)
+func (e *ElasticsearchExecutor) GenerateTimeRange() interface{} {
+	return e.timeRangeGenerator.GenerateConfiguredTimeRange()
+}
+
 // ExecuteQuery executes a query of the specified type in Elasticsearch
 func (e *ElasticsearchExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryType) (models.QueryResult, error) {
-	// Create a random query of the specified type
-	query := e.GenerateRandomQuery(queryType).(map[string]interface{})
+	// Generate time range for the query using the configured TimeRangeGenerator
+	timeRange := e.timeRangeGenerator.GenerateConfiguredTimeRange()
+
+	// Create a random query of the specified type with the time range
+	query := e.GenerateRandomQueryWithTimeRange(queryType, timeRange).(map[string]interface{})
 
 	// Execute the query to Elasticsearch
 	result, err := e.executeElasticsearchQuery(ctx, query)
@@ -107,13 +139,24 @@ func (e *ElasticsearchExecutor) ExecuteQuery(ctx context.Context, queryType mode
 		return models.QueryResult{}, err
 	}
 
+	// Populate time information in the result
+	result.StartTime = timeRange.Start
+	result.EndTime = timeRange.End
+	result.TimeStringRepr = timeRange.StringRepr
+
 	return result, nil
 }
 
 // GenerateRandomQuery generates a random Elasticsearch query based on the query type
+// For compatibility, generates a time range internally
 func (e *ElasticsearchExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	// Generate time range for the query using the time range generator
-	timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
+	// Generate time range for the query using the configured time range generator
+	timeRange := e.timeRangeGenerator.GenerateConfiguredTimeRange()
+	return e.GenerateRandomQueryWithTimeRange(queryType, timeRange)
+}
+
+// GenerateRandomQueryWithTimeRange generates a random Elasticsearch query with a specific time range
+func (e *ElasticsearchExecutor) GenerateRandomQueryWithTimeRange(queryType models.QueryType, timeRange queriercommon.TimeRange) interface{} {
 	startTime := timeRange.Start
 	endTime := timeRange.End
 
@@ -584,15 +627,16 @@ func (e *ElasticsearchExecutor) executeElasticsearchQuery(ctx context.Context, q
 						// Just return an empty result instead of an error
 						log.Printf("DEBUG: Index not found for pattern %s, returning empty result. Query: %s", indexPattern, queryString)
 						return models.QueryResult{
-							HitCount:    0,
-							ResultCount: 0,
-							Duration:    duration,
-							RawResponse: body,
-							QueryString: queryString,
-							StartTime:   timeRange.Start,
-							EndTime:     timeRange.End,
-							Limit:       limit,
-							Step:        step,
+							HitCount:       0,
+							ResultCount:    0,
+							Duration:       duration,
+							RawResponse:    body,
+							QueryString:    queryString,
+							StartTime:      timeRange.Start,
+							EndTime:        timeRange.End,
+							Limit:          limit,
+							Step:           step,
+							TimeStringRepr: "", // Will be updated in querier.go
 						}, nil
 					}
 				}
@@ -647,21 +691,22 @@ func (e *ElasticsearchExecutor) executeElasticsearchQuery(ctx context.Context, q
 	byteRead := int64(len(body))
 
 	return models.QueryResult{
-		HitCount:    hitCount,
-		ResultCount: resultCount,
-		Duration:    duration,
-		RawResponse: body,
-		QueryString: queryString,
-		StartTime:   timeRange.Start,
-		EndTime:     timeRange.End,
-		Limit:       limit,
-		Step:        step,
-		BytesRead:   byteRead,
+		HitCount:       hitCount,
+		ResultCount:    resultCount,
+		Duration:       duration,
+		RawResponse:    body,
+		QueryString:    queryString,
+		StartTime:      timeRange.Start,
+		EndTime:        timeRange.End,
+		Limit:          limit,
+		Step:           step,
+		BytesRead:      byteRead,
+		TimeStringRepr: "", // Will be updated in querier.go
 	}, nil
 }
 
 // extractTimeRangeFromQuery extracts the time range from a query
-func (e *ElasticsearchExecutor) extractTimeRangeFromQuery(query map[string]interface{}) common.TimeRange {
+func (e *ElasticsearchExecutor) extractTimeRangeFromQuery(query map[string]interface{}) queriercommon.TimeRange {
 	var startTime, endTime time.Time
 
 	// Default to now - 7 days to now if we can't extract
@@ -697,7 +742,7 @@ func (e *ElasticsearchExecutor) extractTimeRangeFromQuery(query map[string]inter
 		}
 	}
 
-	return common.TimeRange{Start: startTime, End: endTime}
+	return queriercommon.TimeRange{Start: startTime, End: endTime}
 }
 
 // buildIndexPattern builds Elasticsearch index pattern based on time range
@@ -826,7 +871,7 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 
 		// Generate unique random percentiles
 		numPercentiles := rand.Intn(3) + 2 // 2-4 percentiles
-		uniqueQuantiles := common.GetUniqueRandomQuantiles(numPercentiles)
+		uniqueQuantiles := queriercommon.GetUniqueRandomQuantiles(numPercentiles)
 		percentiles := make([]float64, len(uniqueQuantiles))
 		for i, q := range uniqueQuantiles {
 			percentiles[i] = q * 100 // Convert to percentage for ES
@@ -939,7 +984,7 @@ func (e *ElasticsearchExecutor) generateStatisticalQuery(baseQuery map[string]in
 						if aggFunction == "percentiles" {
 							// Use unique random percentiles for date histogram too
 							numPercentiles := rand.Intn(3) + 1 // 1-3 percentiles
-							uniqueQuantiles := common.GetUniqueRandomQuantiles(numPercentiles)
+							uniqueQuantiles := queriercommon.GetUniqueRandomQuantiles(numPercentiles)
 							percentiles := make([]float64, len(uniqueQuantiles))
 							for i, q := range uniqueQuantiles {
 								percentiles[i] = q * 100 // Convert to percentage for ES
@@ -965,7 +1010,7 @@ func (e *ElasticsearchExecutor) generateStatisticalQuery(baseQuery map[string]in
 		if aggFunction == "percentiles" {
 			// Special handling for percentiles aggregation - use unique random percentiles
 			numPercentiles := rand.Intn(3) + 1 // 1-3 percentiles
-			uniqueQuantiles := common.GetUniqueRandomQuantiles(numPercentiles)
+			uniqueQuantiles := queriercommon.GetUniqueRandomQuantiles(numPercentiles)
 			percentiles := make([]float64, len(uniqueQuantiles))
 			for i, q := range uniqueQuantiles {
 				percentiles[i] = q * 100 // Convert to percentage for ES

@@ -28,11 +28,12 @@ type QueryResult struct {
 	RawResponse []byte        // Raw response data
 
 	// Query details
-	QueryString string    // The actual query string sent to the database
-	StartTime   time.Time // Query start time range
-	EndTime     time.Time // Query end time range
-	Limit       string    // Query result limit
-	Step        string    // Query step, for range/time series queries
+	QueryString    string    // The actual query string sent to the database
+	StartTime      time.Time // Query start time range
+	EndTime        time.Time // Query end time range
+	Limit          string    // Query result limit
+	Step           string    // Query step, for range/time series queries
+	TimeStringRepr string    // String representation of time range for metrics
 }
 
 // QueryExecutor interface for executing queries
@@ -42,6 +43,9 @@ type QueryExecutor interface {
 
 	// GenerateRandomQuery creates a random query of the specified type
 	GenerateRandomQuery(queryType QueryType) interface{}
+
+	// GenerateTimeRange generates a time range for queries (for error handling)
+	GenerateTimeRange() interface{}
 
 	// GetSystemName returns the name of the system
 	GetSystemName() string

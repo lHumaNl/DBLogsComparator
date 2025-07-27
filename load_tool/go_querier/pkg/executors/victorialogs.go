@@ -16,9 +16,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
-	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
+	queriercommon "github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
@@ -66,7 +67,7 @@ type VictoriaLogsExecutor struct {
 	ClientPool         *pkg.ClientPool // Use pool instead of single client
 	Options            models.Options
 	availableLabels    []string
-	timeRangeGenerator *common.TimeRangeGenerator
+	timeRangeGenerator *queriercommon.TimeRangeGenerator
 	// labelCache for caching label values
 	labelCache     map[string][]string
 	labelCacheLock sync.RWMutex
@@ -131,7 +132,37 @@ func NewVictoriaLogsExecutor(baseURL string, options models.Options, workerID in
 		ClientPool:         clientPool,
 		Options:            options,
 		availableLabels:    availableLabels,
-		timeRangeGenerator: common.NewTimeRangeGenerator(),
+		timeRangeGenerator: queriercommon.NewTimeRangeGenerator(),
+		labelCache:         labelCache,
+		labelCacheLock:     sync.RWMutex{},
+	}
+}
+
+// NewVictoriaLogsExecutorWithTimeConfig creates a new VictoriaLogs executor with time configuration
+func NewVictoriaLogsExecutorWithTimeConfig(baseURL string, options models.Options, workerID int, timeConfig *common.TimeRangeConfig) *VictoriaLogsExecutor {
+	// Ensure the base URL ends with a slash
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL = baseURL + "/"
+	}
+	// Define the search path for VictoriaLogs API
+	searchPath := "select/logsql/query"
+	// Initialize with common labels from our shared data package
+	availableLabels := logdata.CommonLabels
+	// Initialize the label cache with static values from common data
+	labelCache := make(map[string][]string)
+	labelValuesMap := logdata.GetLabelValuesMap()
+	for label, values := range labelValuesMap {
+		labelCache[label] = values
+	}
+	// Create HTTP client pool with dynamic connection count
+	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
+	return &VictoriaLogsExecutor{
+		BaseURL:            baseURL,
+		SearchPath:         searchPath,
+		ClientPool:         clientPool,
+		Options:            options,
+		availableLabels:    availableLabels,
+		timeRangeGenerator: queriercommon.NewTimeRangeGeneratorWithConfig(timeConfig),
 		labelCache:         labelCache,
 		labelCacheLock:     sync.RWMutex{},
 	}
@@ -140,6 +171,11 @@ func NewVictoriaLogsExecutor(baseURL string, options models.Options, workerID in
 // GetSystemName returns the system name
 func (e *VictoriaLogsExecutor) GetSystemName() string {
 	return "victorialogs"
+}
+
+// GenerateTimeRange generates a time range for queries (for error handling)
+func (e *VictoriaLogsExecutor) GenerateTimeRange() interface{} {
+	return e.timeRangeGenerator.GenerateConfiguredTimeRange()
 }
 
 // ExecuteQuery executes a query of the given type against VictoriaLogs
@@ -170,10 +206,10 @@ func (e *VictoriaLogsExecutor) ExecuteQuery(ctx context.Context, queryType model
 		return models.QueryResult{}, fmt.Errorf("unsupported query type: %s", string(queryType))
 	}
 
-	// Generate time range for the query using the common TimeRangeGenerator
-	timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
-	startTime := common.FormatTimeRFC3339(timeRange.Start)
-	endTime := common.FormatTimeRFC3339(timeRange.End)
+	// Generate time range for the query using the configured TimeRangeGenerator
+	timeRange := e.timeRangeGenerator.GenerateConfiguredTimeRange()
+	startTime := queriercommon.FormatTimeRFC3339(timeRange.Start)
+	endTime := queriercommon.FormatTimeRFC3339(timeRange.End)
 
 	// Determine step based on time range duration, similar to Loki executor
 	var step string
@@ -210,7 +246,8 @@ func (e *VictoriaLogsExecutor) ExecuteQuery(ctx context.Context, queryType model
 	result.StartTime = timeRange.Start
 	result.EndTime = timeRange.End
 	result.Limit = limit
-	result.Step = step // Populate Step in the result
+	result.Step = step                           // Populate Step in the result
+	result.TimeStringRepr = timeRange.StringRepr // Use string representation from time range
 
 	return result, nil
 }
@@ -239,8 +276,8 @@ func (e *VictoriaLogsExecutor) GetLabelValues(ctx context.Context, label string)
 
 // GenerateRandomQuery generates a random query of the specific type
 func (e *VictoriaLogsExecutor) GenerateRandomQuery(queryType models.QueryType) interface{} {
-	// Generate a random time range based on the configuration
-	timeRange := e.timeRangeGenerator.GenerateRandomTimeRange()
+	// Generate a time range based on the configuration
+	timeRange := e.timeRangeGenerator.GenerateConfiguredTimeRange()
 	startTime := timeRange.Start
 	endTime := timeRange.End
 
@@ -564,7 +601,7 @@ func (e *VictoriaLogsExecutor) generateAnalyticalQuery() string {
 
 		// Multiple unique quantiles for analytical queries
 		numQuantiles := rand.Intn(3) + 1 // 1-3 quantiles
-		uniqueQuantiles := common.GetUniqueRandomQuantileStrings(numQuantiles)
+		uniqueQuantiles := queriercommon.GetUniqueRandomQuantileStrings(numQuantiles)
 		quantilesParts := make([]string, len(uniqueQuantiles))
 		for i, q := range uniqueQuantiles {
 			aliasNum := strings.Replace(q, "0.", "", 1)
@@ -647,7 +684,7 @@ func (e *VictoriaLogsExecutor) generateStatQuery() string {
 	if rand.Intn(10) < 3 {
 		numericFields := []string{"response_time", "latency", "duration", "bytes", "cpu", "memory"}
 		field := numericFields[rand.Intn(len(numericFields))]
-		quantile := common.GetRandomQuantile()
+		quantile := queriercommon.GetRandomQuantile()
 
 		// Remove the "0." prefix for alias (e.g., "0.95" -> "95")
 		aliasNum := strings.Replace(quantile, "0.", "", 1)
