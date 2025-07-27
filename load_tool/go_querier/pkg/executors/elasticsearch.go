@@ -14,17 +14,16 @@ import (
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
-	"gith
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/common"
-	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_querier/pkg/models"
 )
 
 // ElasticsearchExecutor query executor for Elasticsearch
+type ElasticsearchExecutor struct {
 	BaseURL    string
 	ClientPool *pkg.ClientPool // Use pool instead of single client
 	Options    models.Options
 	IndexName  string
-	IndexName string
 
 	// Cache for label values
 	labelCache map[string][]string
@@ -823,16 +822,16 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 	// Add percentiles aggregation for numerical fields (40% chance)
 	if rand.Intn(10) < 4 {
 		numericFields := []string{"response_time", "latency", "bytes_sent", "duration", "cpu", "memory"}
+		field := numericFields[rand.Intn(len(numericFields))]
 
-		
 		// Generate unique random percentiles
 		numPercentiles := rand.Intn(3) + 2 // 2-4 percentiles
 		uniqueQuantiles := common.GetUniqueRandomQuantiles(numPercentiles)
 		percentiles := make([]float64, len(uniqueQuantiles))
 		for i, q := range uniqueQuantiles {
 			percentiles[i] = q * 100 // Convert to percentage for ES
+		}
 
-		
 		aggregations[field+"_percentiles"] = map[string]interface{}{
 			"percentiles": map[string]interface{}{
 				"field":    field,
@@ -970,8 +969,8 @@ func (e *ElasticsearchExecutor) generateStatisticalQuery(baseQuery map[string]in
 			percentiles := make([]float64, len(uniqueQuantiles))
 			for i, q := range uniqueQuantiles {
 				percentiles[i] = q * 100 // Convert to percentage for ES
+			}
 
-			
 			aggregation = map[string]interface{}{
 				"stat_result": map[string]interface{}{
 					"percentiles": map[string]interface{}{
