@@ -9,3 +9,4 @@ monitoring/data
 load_tool/load_tool
 load_tool/load_tool.pid
 load_tool/*.log
+load_tool/logs

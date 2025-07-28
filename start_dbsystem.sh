@@ -33,29 +33,40 @@ show_help() {
     echo "  elk         - Start ELK Stack (Elasticsearch + Kibana) and monitoring"
     echo "  loki        - Start Loki and monitoring"
     echo "  victorialogs - Start VictoriaLogs and monitoring"
+    echo "  telegraf    - Start only Telegraf"
     echo "  all         - Only available with --down option to stop all systems"
     echo ""
     echo "Options:"
-    echo "  --generator     - Start the log generator after starting the log systems"
-    echo "  --querier       - Start the log querier after starting the log systems"
-    echo "  --combined      - Start the log combined after starting the log systems"
-    echo "  --native        - Start the log generator natively (without Docker)"
-    echo "  --rebuild-native - Start the log tools natively and rebuild before starting"
+    echo "  --generator     - Start the log generator after starting the log systems (native by default)"
+    echo "  --querier       - Start the log querier after starting the log systems (native by default)"
+    echo "  --combined      - Start the log combined after starting the log systems (native by default)"
+    echo "  --docker        - Start the log tools with Docker (instead of native)"
+    echo "  --rebuild-native - Rebuild the load_tool before starting (only for native mode)"
     echo "  --no-monitoring - Don't start or check monitoring system (ignored with 'monitoring' log system)"
+    echo "  --stability     - Use stability load testing mode (default)"
+    echo "  --maxPerf       - Use maxPerf load testing mode"
+    echo "  --telegraf      - Start Telegraf for monitoring"
+    echo "  --ignore_docker - Skip docker.sock permission check for Telegraf"
     echo "  --down          - Stop the specified log system and its containers"
     echo "  --stop-load - Stop only the log load tool (doesn't affect other systems)"
     echo "  --help          - Show this help"
     echo ""
     echo "Examples:"
-    echo "  $0 monitoring                # Start only monitoring (VictoriaMetrics, Grafana)"
-    echo "  $0 elk                       # Start ELK Stack and monitoring"
-    echo "  $0 loki --generator          # Start Loki, monitoring, and log generator"
-    echo "  $0 loki --generator --native # Start Loki, monitoring, and native log generator"
+    echo "  $0 monitoring                      # Start only monitoring (VictoriaMetrics, Grafana)"
+    echo "  $0 elk                             # Start ELK Stack and monitoring"
+    echo "  $0 loki --generator                # Start Loki, monitoring, and native log generator"
+    echo "  $0 loki --generator --docker       # Start Loki, monitoring, and Docker log generator"
+    echo "  $0 loki --generator --maxPerf      # Start Loki, monitoring, and generator in maxPerf mode"
     echo "  $0 loki --querier --rebuild-native # Start Loki, monitoring, and querier with rebuild"
-    echo "  $0 victorialogs --no-monitoring # Start VictoriaLogs without monitoring"
-    echo "  $0 elk --down                # Stop ELK Stack but leave monitoring running"
-    echo "  $0 monitoring --down         # Stop the monitoring system"
-    echo "  $0 all --down                # Stop all systems"
+    echo "  $0 victorialogs --no-monitoring    # Start VictoriaLogs without monitoring"
+    echo "  $0 monitoring --telegraf           # Start monitoring and Telegraf"
+    echo "  $0 telegraf                        # Start only Telegraf"
+    echo "  $0 telegraf --ignore_docker        # Start Telegraf, skip docker.sock check"
+    echo "  $0 loki --telegraf --ignore_docker # Start Loki, Telegraf, skip docker.sock check"
+    echo "  $0 elk --down                      # Stop ELK Stack but leave monitoring running"
+    echo "  $0 monitoring --down               # Stop the monitoring system"
+    echo "  $0 telegraf --down                 # Stop Telegraf"
+    echo "  $0 all --down                      # Stop all systems"
     exit 0
 }
 
@@ -250,6 +261,50 @@ stop_victorialogs() {
     echo "VictoriaLogs stopped successfully!"
 }
 
+# Function to start Telegraf
+start_telegraf() {
+    echo "Starting Telegraf..."
+    
+    # Read Telegraf environment variables
+    cd monitoring/telegraf
+    read_env_file ".env"
+    cd - > /dev/null
+    
+    # Start Telegraf
+    cd monitoring/telegraf
+    $COMPOSE_CMD up -d
+    cd - > /dev/null
+    
+    # Check that Telegraf is healthy
+    echo "Verifying Telegraf status..."
+    IGNORE_DOCKER=$IGNORE_DOCKER ./check_health.sh --telegraf
+    
+    if [ $? -eq 0 ]; then
+        echo "Telegraf started successfully!"
+    else
+        echo "Warning: Telegraf may not be fully operational."
+        echo "Check the logs for more details:"
+        echo "  docker logs telegraf"
+    fi
+}
+
+# Function to stop Telegraf
+stop_telegraf() {
+    echo "Stopping Telegraf..."
+    
+    # Read Telegraf environment variables
+    cd monitoring/telegraf
+    read_env_file ".env"
+    cd - > /dev/null
+    
+    # Stop Telegraf
+    cd monitoring/telegraf
+    $COMPOSE_CMD down
+    cd - > /dev/null
+    
+    echo "Telegraf stopped successfully!"
+}
+
 # Function to stop log generator
 stop_generator() {
     echo "Stopping Log Generator..."
@@ -326,8 +381,8 @@ start_generator() {
                         ;;
     esac
     
-    # Start the log generator based on mode (Docker or native)
-    if [ "$USE_NATIVE" = "true" ]; then
+    # Start the log generator based on mode (native or Docker)
+    if [ "$USE_NATIVE" = "true" ] && [ "$USE_DOCKER" = "false" ]; then
         echo "Starting log generator in native mode..."
         cd load_tool
         
@@ -360,8 +415,8 @@ start_generator() {
         
         # Run with specified config and hosts file for local execution
         echo ""
-        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
-        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "generator" &
+        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml (load mode: $LOAD_MODE)"
+        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "generator" -load-mode "$LOAD_MODE" &
         GENERATOR_PID=$!
         
         echo "Log Generator started natively with PID: $GENERATOR_PID"
@@ -380,8 +435,8 @@ start_generator() {
         # Override environment variables for docker-compose
         # Pass the selected logging system and mode through variables
         # Add --build flag for automatic image rebuild when changes occur
-        echo "Starting log generator with updated image..."
-        SYSTEM=$SYSTEM_ARG MODE="generator" $COMPOSE_CMD up -d --build
+        echo "Starting log generator with updated image (load mode: $LOAD_MODE)..."
+        SYSTEM=$SYSTEM_ARG MODE="generator" LOAD_MODE=$LOAD_MODE $COMPOSE_CMD up -d --build
         echo "Log Generator started with Docker"
         cd - > /dev/null
     fi
@@ -412,8 +467,8 @@ start_querier() {
                         ;;
     esac
     
-    # Start the log querier based on mode (Docker or native)
-    if [ "$USE_NATIVE" = "true" ]; then
+    # Start the log querier based on mode (native or Docker)
+    if [ "$USE_NATIVE" = "true" ] && [ "$USE_DOCKER" = "false" ]; then
         echo "Starting log querier in native mode..."
         cd load_tool
         
@@ -446,8 +501,8 @@ start_querier() {
         
         # Run with specified config and hosts file
         echo ""
-        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
-        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "querier" &
+        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml (load mode: $LOAD_MODE)"
+        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "querier" -load-mode "$LOAD_MODE" &
         QUERIER_PID=$!
         
         echo "Log Querier started natively with PID: $QUERIER_PID"
@@ -464,8 +519,8 @@ start_querier() {
         $COMPOSE_CMD down
         
         # Override environment variables for docker-compose
-        echo "Starting log querier with updated image..."
-        SYSTEM=$SYSTEM_ARG MODE="querier" $COMPOSE_CMD up -d --build
+        echo "Starting log querier with updated image (load mode: $LOAD_MODE)..."
+        SYSTEM=$SYSTEM_ARG MODE="querier" LOAD_MODE=$LOAD_MODE $COMPOSE_CMD up -d --build
         echo "Log Querier started with Docker"
         cd - > /dev/null
     fi
@@ -496,8 +551,8 @@ start_combined() {
                         ;;
     esac
     
-    # Start the log combined based on mode (Docker or native)
-    if [ "$USE_NATIVE" = "true" ]; then
+    # Start the log combined based on mode (native or Docker)
+    if [ "$USE_NATIVE" = "true" ] && [ "$USE_DOCKER" = "false" ]; then
         echo "Starting log combined in native mode..."
         cd load_tool
         
@@ -530,8 +585,8 @@ start_combined() {
         
         # Run with specified config and hosts file
         echo ""
-        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml"
-        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "combined" &
+        echo "Starting load_tool with config: config.yaml and hosts file db_hosts.yaml (load mode: $LOAD_MODE)"
+        ./load_tool -config "config.yaml" -hosts "db_hosts.yaml" -system "$SYSTEM_ARG" -mode "combined" -load-mode "$LOAD_MODE" &
         COMBINED_PID=$!
         
         echo "Log Combined started natively with PID: $COMBINED_PID"
@@ -548,8 +603,8 @@ start_combined() {
         $COMPOSE_CMD down
         
         # Override environment variables for docker-compose
-        echo "Starting log combined with updated image..."
-        SYSTEM=$SYSTEM_ARG MODE="combined" $COMPOSE_CMD up -d --build
+        echo "Starting log combined with updated image (load mode: $LOAD_MODE)..."
+        SYSTEM=$SYSTEM_ARG MODE="combined" LOAD_MODE=$LOAD_MODE $COMPOSE_CMD up -d --build
         echo "Log Combined started with Docker"
         cd - > /dev/null
     fi
@@ -575,6 +630,11 @@ stop_all() {
     
     if [ -d "victorialogs" ] && [ -f "victorialogs/docker-compose.yml" ]; then
         stop_victorialogs
+    fi
+    
+    # Stop Telegraf if it's running
+    if [ -d "monitoring/telegraf" ] && [ -f "monitoring/telegraf/docker-compose.yml" ]; then
+        stop_telegraf
     fi
     
     # Finally stop monitoring
@@ -604,8 +664,12 @@ LAUNCH_COMBINED=false
 NO_MONITORING=false
 BRING_DOWN=false
 STOP_GENERATOR=false
-USE_NATIVE=false
+USE_NATIVE=true
+USE_DOCKER=false
 REBUILD_NATIVE=false
+LOAD_MODE="stability"
+LAUNCH_TELEGRAF=false
+IGNORE_DOCKER=false
 
 for arg in "$@"; do
     case $arg in
@@ -615,16 +679,24 @@ for arg in "$@"; do
                          ;;
         --combined )    LAUNCH_COMBINED=true
                          ;;
-        --native )      USE_NATIVE=true
+        --docker )      USE_NATIVE=false
+                         USE_DOCKER=true
                          ;;
-        --rebuild-native ) USE_NATIVE=true
-                         REBUILD_NATIVE=true
+        --rebuild-native ) REBUILD_NATIVE=true
                          ;;
         --no-monitoring ) NO_MONITORING=true
                          ;;
         --down )        BRING_DOWN=true
                          ;;
         --stop-load ) STOP_GENERATOR=true
+                         ;;
+        --stability )   LOAD_MODE="stability"
+                         ;;
+        --maxPerf )     LOAD_MODE="maxPerf"
+                         ;;
+        --telegraf )    LAUNCH_TELEGRAF=true
+                         ;;
+        --ignore_docker ) IGNORE_DOCKER=true
                          ;;
         --help )        show_help
                          ;;
@@ -674,6 +746,8 @@ if $BRING_DOWN; then
                         ;;
         victorialogs )  stop_victorialogs
                         ;;
+        telegraf )      stop_telegraf
+                        ;;
         * )             echo "Unknown system: $DB_SYSTEM"
                         show_help
                         ;;
@@ -711,6 +785,8 @@ case $DB_SYSTEM in
                     fi
                     start_victorialogs
                     ;;
+    telegraf )      start_telegraf
+                    ;;
     * )             echo "Unknown system: $DB_SYSTEM"
                     show_help
                     ;;
@@ -727,6 +803,11 @@ fi
 
 if $LAUNCH_COMBINED; then
     start_combined
+fi
+
+# Start Telegraf if flag is specified
+if $LAUNCH_TELEGRAF; then
+    start_telegraf
 fi
 
 echo "All systems started successfully!"

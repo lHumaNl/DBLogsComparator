@@ -18,5 +18,11 @@ services:
       - HOST_SYS=/rootfs/sys
       - HOST_ETC=/rootfs/etc
     ports:
-      - "${PROMETHEUS_PORT}:${PROMETHEUS_PORT}"
+      - "${PROMETHEUS_PORT}:9273"
     user: "telegraf:$PRIVILEGED_USER_ID"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:9273/metrics || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

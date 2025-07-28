@@ -52,7 +52,7 @@ type TestReport struct {
 func NewLoadTestLogger() (*LoadTestLogger, error) {
 	now := time.Now()
 	TestStartTime = now // Set global test start time
-	filename := fmt.Sprintf("times_%s.log", now.Format("2006-01-02_15-04-05"))
+	filename := fmt.Sprintf("./logs/times_%s.log", now.Format("2006-01-02_15-04-05"))
 
 	// Create or open the log file
 	logFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -135,7 +135,7 @@ func (l *LoadTestLogger) Close() error {
 // GenerateYAMLReport generates a YAML report file based on the logged data
 func (l *LoadTestLogger) GenerateYAMLReport(testType string, config LoadTestConfig) error {
 	now := time.Now()
-	yamlFilename := fmt.Sprintf("times_%s.yaml", l.startTime.Format("2006-01-02_15-04-05"))
+	yamlFilename := fmt.Sprintf("./logs/times_%s.yaml", l.startTime.Format("2006-01-02_15-04-05"))
 
 	// Calculate test parameters
 	baseSpeed := float64(config.BaseRPS)

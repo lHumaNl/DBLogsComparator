@@ -53,30 +53,42 @@ A master script for controlling all components of the benchmarking platform.
 - `elk` - Start ELK Stack (Elasticsearch + Kibana) and monitoring
 - `loki` - Start Loki and monitoring
 - `victorialogs` - Start VictoriaLogs and monitoring
+- `telegraf` - Start only Telegraf
 - `all` - Only available with --down option to stop all systems
 
 **Options:**
-- `--generator` - Start the log generator after starting the log systems
-- `--querier` - Start the log querier after starting the log systems
-- `--combined` - Start the log generator and querier in combined mode
-- `--native` - Start the log generator natively (without Docker)
+- `--generator` - Start the log generator after starting the log systems (native by default)
+- `--querier` - Start the log querier after starting the log systems (native by default)
+- `--combined` - Start the log generator and querier in combined mode (native by default)
+- `--docker` - Start the log tools with Docker (instead of native)
+- `--rebuild-native` - Rebuild the load_tool before starting (only for native mode)
+- `--stability` - Use stability load testing mode (default)
+- `--maxPerf` - Use maxPerf load testing mode
+- `--telegraf` - Start Telegraf for monitoring
+- `--ignore_docker` - Skip docker.sock permission check for Telegraf
 - `--no-monitoring` - Don't start or check monitoring system (ignored with 'monitoring' log system)
 - `--down` - Stop the specified log system and its containers
-- `--stop-generator` - Stop only the log generator (doesn't affect other systems)
+- `--stop-load` - Stop only the log load tool (doesn't affect other systems)
 - `--help` - Show help information
 
 **Examples:**
 ```bash
-./start_dbsystem.sh monitoring                  # Start only monitoring
-./start_dbsystem.sh elk                         # Start ELK Stack with monitoring
-./start_dbsystem.sh loki --generator            # Start Loki, monitoring, and log generator
-./start_dbsystem.sh elk --querier               # Start ELK Stack with log querier
-./start_dbsystem.sh victorialogs --combined     # Start VictoriaLogs with combined generator and querier
-./start_dbsystem.sh loki --generator --native   # Start Loki with native log generator 
+./start_dbsystem.sh monitoring                    # Start only monitoring
+./start_dbsystem.sh elk                           # Start ELK Stack with monitoring
+./start_dbsystem.sh loki --generator              # Start Loki, monitoring, and native log generator
+./start_dbsystem.sh loki --generator --docker     # Start Loki, monitoring, and Docker log generator
+./start_dbsystem.sh elk --querier                 # Start ELK Stack with native log querier
+./start_dbsystem.sh loki --generator --maxPerf    # Start Loki with generator in maxPerf mode
+./start_dbsystem.sh victorialogs --combined       # Start VictoriaLogs with combined generator and querier (native)
+./start_dbsystem.sh loki --querier --rebuild-native # Start Loki with querier and rebuild
 ./start_dbsystem.sh victorialogs --no-monitoring  # Start VictoriaLogs without monitoring
-./start_dbsystem.sh --stop-generator            # Stop only the log generator
-./start_dbsystem.sh elk --down                  # Stop ELK Stack but leave monitoring running
-./start_dbsystem.sh all --down                  # Stop all systems
+./start_dbsystem.sh telegraf                      # Start only Telegraf
+./start_dbsystem.sh monitoring --telegraf         # Start monitoring and Telegraf
+./start_dbsystem.sh telegraf --ignore_docker      # Start Telegraf, skip docker.sock check
+./start_dbsystem.sh --stop-load                   # Stop only the log load tool
+./start_dbsystem.sh elk --down                    # Stop ELK Stack but leave monitoring running
+./start_dbsystem.sh telegraf --down               # Stop Telegraf
+./start_dbsystem.sh all --down                    # Stop all systems
 ```
 
 #### check_health.sh
@@ -94,6 +106,7 @@ A comprehensive script for checking the health and operational status of all com
 - `--loki` - Check only Loki
 - `--victorialogs` - Check only VictoriaLogs
 - `--generator` - Check only the log generator
+- `--telegraf` - Check only Telegraf
 - `--help` - Show help information
 
 **Features:**

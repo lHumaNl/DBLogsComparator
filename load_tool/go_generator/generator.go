@@ -4,10 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
-	"os"
 	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/go_generator/logdb"
@@ -20,16 +17,8 @@ func main() {
 
 	// Determine optimal number of workers
 	// By default - number of available CPUs * 2
-	cpuCount := runtime.NumCPU()
-	defaultWorkers := cpuCount * 2
-
-	// If CPU limit is set for container, use it
-	cpuLimit := os.Getenv("CPU_LIMIT")
-	if cpuLimit != "" {
-		if limit, err := strconv.ParseFloat(cpuLimit, 64); err == nil && limit > 0 {
-			defaultWorkers = int(limit * 2)
-		}
-	}
+	//cpuCount := runtime.NumCPU()
+	//defaultWorkers := cpuCount * 2
 
 	// Parse command line arguments
 	mode := flag.String("mode", "victoria", "Operation mode: victoria (VictoriaLogs), es (Elasticsearch), loki (Loki)")
@@ -37,8 +26,6 @@ func main() {
 	rps := flag.Int("rps", 10, "Requests per second")
 	duration := flag.Duration("duration", 1*time.Minute, "Test duration")
 	bulkSize := flag.Int("bulk-size", 100, "Number of logs in one request")
-	// workerCount flag removed - using runtime.NumCPU() * 4
-	connectionCount := flag.Int("connection-count", 10, "Number of HTTP connections")
 
 	// Log type distribution
 	webAccessWeight := flag.Int("web-access-weight", 60, "Weight for web_access logs")

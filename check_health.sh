@@ -20,6 +20,7 @@ show_help() {
     echo "  --loki          - Check only Loki"
     echo "  --victorialogs  - Check only VictoriaLogs"
     echo "  --generator     - Check only the log generator"
+    echo "  --telegraf      - Check only Telegraf"
     echo "  --help          - Show this help"
     echo ""
     echo "If no options are specified, all systems will be checked."
@@ -70,11 +71,20 @@ read_victorialogs_env() {
     cd - > /dev/null
 }
 
+read_telegraf_env() {
+    cd "$(dirname "$0")/monitoring/telegraf"
+    read_env_file ".env"
+    PROMETHEUS_PORT=${PROMETHEUS_PORT:-9273}
+    PRIVILEGED_USER_ID=${PRIVILEGED_USER_ID:-999}
+    cd - > /dev/null
+}
+
 # Load all environment variables
 read_monitoring_env
 read_elk_env
 read_loki_env
 read_victorialogs_env
+read_telegraf_env
 
 # Print header function
 print_header() {
@@ -348,12 +358,56 @@ check_generator() {
     return $errors
 }
 
+# Telegraf check
+check_telegraf() {
+    print_header "TELEGRAF CHECK"
+    local errors=0
+    local ignore_docker_check=${IGNORE_DOCKER:-false}
+    
+    # Check running containers
+    check_container_running "telegraf" "Telegraf is running" || ((errors++))
+    
+    # Check service availability using metrics
+    check_url "http://localhost:${PROMETHEUS_PORT}/metrics" "Telegraf exports metrics" "Telegraf does not export metrics" || ((errors++))
+    
+    # Check for docker.sock permission issues if not ignoring
+    if [ "$ignore_docker_check" != "true" ]; then
+        echo "Checking Telegraf logs for docker.sock permission issues..."
+        echo "Waiting 25 seconds for Telegraf to fully initialize..."
+        sleep 25
+        if docker logs telegraf 2>&1 | grep -q "permission denied while trying to connect to the Docker daemon socket"; then
+            echo -e "${RED}ERROR${NC}: Неправильно указан id пользователя в .env, который не имеет доступа к docker.sock"
+            echo "Остановка Telegraf..."
+            cd "$(dirname "$0")/monitoring/telegraf"
+            docker-compose down 2>/dev/null || docker compose down 2>/dev/null
+            cd - > /dev/null
+            ((errors++))
+        else
+            echo -e "${GREEN}OK${NC}: No docker.sock permission issues found"
+        fi
+    else
+        echo -e "${YELLOW}SKIPPED${NC}: Docker.sock permission check (--ignore_docker flag used)"
+    fi
+    
+    # Check metrics in VictoriaMetrics or directly from Telegraf
+    check_metrics_in_vm "system_uptime" "Telegraf metrics are available" "http://localhost:${PROMETHEUS_PORT}/metrics" || ((errors++))
+    
+    if [ $errors -eq 0 ]; then
+        echo -e "\n${GREEN}Telegraf is working correctly!${NC}"
+    else
+        echo -e "\n${RED}Telegraf has $errors errors!${NC}"
+    fi
+    
+    return $errors
+}
+
 # Parse arguments
 CHECK_MONITORING=false
 CHECK_ELK=false
 CHECK_LOKI=false
 CHECK_VICTORIALOGS=false
 CHECK_GENERATOR=false
+CHECK_TELEGRAF=false
 CHECK_ALL=true
 
 if [ $# -gt 0 ]; then
@@ -370,6 +424,8 @@ if [ $# -gt 0 ]; then
             --victorialogs )  CHECK_VICTORIALOGS=true
                              ;;
             --generator )     CHECK_GENERATOR=true
+                             ;;
+            --telegraf )      CHECK_TELEGRAF=true
                              ;;
             --all )           CHECK_ALL=true
                              ;;
@@ -401,6 +457,9 @@ if $CHECK_ALL; then
     
     check_generator
     TOTAL_ERRORS=$((TOTAL_ERRORS + $?))
+    
+    check_telegraf
+    TOTAL_ERRORS=$((TOTAL_ERRORS + $?))
 else
     # Otherwise, check only the specified systems
     if $CHECK_MONITORING; then
@@ -425,6 +484,11 @@ else
     
     if $CHECK_GENERATOR; then
         check_generator
+        TOTAL_ERRORS=$((TOTAL_ERRORS + $?))
+    fi
+    
+    if $CHECK_TELEGRAF; then
+        check_telegraf
         TOTAL_ERRORS=$((TOTAL_ERRORS + $?))
     fi
 fi

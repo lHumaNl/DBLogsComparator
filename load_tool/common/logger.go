@@ -114,7 +114,7 @@ func LogQueryError(workerID int, queryType, system string, err error, query stri
 
 	// Also log to timestamped error file (using test start time)
 	timestamp := TestStartTime.Format("2006-01-02_15-04-05")
-	filename := fmt.Sprintf("querier_err_%s.log", timestamp)
+	filename := fmt.Sprintf("./logs/querier_err_%s.log", timestamp)
 	logToErrorFile(filename, fmt.Sprintf("Processor %d: %s query error: %v. Query: %s",
 		workerID, queryType, err, query))
 }
@@ -141,7 +141,7 @@ func LogGeneratorError(workerID int, system string, err error, request string) {
 
 	// Also log to timestamped error file (using test start time)
 	timestamp := TestStartTime.Format("2006-01-02_15-04-05")
-	filename := fmt.Sprintf("generator_err_%s.log", timestamp)
+	filename := fmt.Sprintf("./logs/generator_err_%s.log", timestamp)
 	logToErrorFile(filename, fmt.Sprintf("Processor %d: %s request error: %v. Request: %s",
 		workerID, system, err, request))
 }
