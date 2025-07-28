@@ -8,6 +8,7 @@ system provides a unified view of metrics from all log storage solutions and com
 - **VictoriaMetrics**: Time-series database for metrics collection
 - **Grafana**: Visualization platform with pre-configured dashboards
 - **Grafana Image Renderer**: Service for creating and saving dashboard snapshots
+- **Telegraf**: System metrics collection agent (deployed separately on the database logging host)
 
 ## Structure
 
@@ -16,6 +17,7 @@ system provides a unified view of metrics from all log storage solutions and com
         - `dashboards/` - Pre-configured dashboards for all systems
         - `provisioning/` - Automatic dashboard and datasource provisioning
     - `victoria-metrics/` - VictoriaMetrics scrape configuration
+- `telegraf/` - Telegraf system metrics collection (must be deployed on database logging hosts)
 
 ## Startup
 
@@ -78,6 +80,16 @@ authors for their work, which served as a foundation for our monitoring setup.
     - **Source
       **: [grafana.com/grafana/dashboards/17781-loki-metrics-dashboard/](https://grafana.com/grafana/dashboards/17781-loki-metrics-dashboard/)
 
+- **System Metrics for the Linux Hosts**:
+    - **Author**: ulricqin
+    - **Source
+      **: [https://grafana.com/grafana/dashboards/15365-system-metrics-for-the-linux-hosts/](https://grafana.com/grafana/dashboards/15365-system-metrics-for-the-linux-hosts/)
+
+- **Host System and Docker Container Metrics**:
+    - **Author**: san-gg
+    - **Source
+      **: [https://grafana.com/grafana/dashboards/21740-host-system-and-docker-container-metrics/](https://grafana.com/grafana/dashboards/21740-host-system-and-docker-container-metrics/)
+
 ## Dashboard Access
 
 Access dashboards through Grafana:
@@ -103,6 +115,32 @@ database (grafana.db) which is persisted in a volume, ensuring they aren't lost 
 
 The monitoring system creates a Docker network called `monitoring-network` which is used by all components that need to
 be monitored. This network is created as external, so other services can connect to it.
+
+## Telegraf System Metrics Collection
+
+The `telegraf/` directory contains a separate Docker Compose configuration for collecting system and Docker metrics from the host where database logging solutions (ELK/Loki/VictoriaLogs) are deployed.
+
+### Important Deployment Requirements
+
+**⚠️ Critical:** Telegraf must be deployed on the same host as your database logging infrastructure to collect accurate system metrics.
+
+### Configuration
+
+1. **Deploy Telegraf on the database host:**
+   ```bash
+   cd telegraf
+   docker-compose up -d
+   ```
+
+2. **Update VictoriaMetrics configuration:**
+   In `config/victoria-metrics/victoria-metrics.yaml`, ensure the telegraf job points to the correct host/port where Telegraf is running:
+   ```yaml
+   - job_name: 'telegraf'
+     static_configs:
+       - targets: ['your-db-host:9273']  # Replace with actual host/port
+   ```
+
+For detailed setup instructions, see `telegraf/README.md`.
 
 ## Extending the Monitoring
 

@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  telegraf:
+    image: telegraf:1.28-alpine
+    container_name: telegraf
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./config/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /$DOCKER_SOCKET:$DOCKER_SOCKET
+      - /proc:/rootfs/proc:ro
+      - /sys:/rootfs/sys:ro
+      - /etc:/rootfs/etc:ro
+    environment:
+      - HOST_PROC=/rootfs/proc
+      - HOST_SYS=/rootfs/sys
+      - HOST_ETC=/rootfs/etc
+    ports:
+      - "${PROMETHEUS_PORT}:${PROMETHEUS_PORT}"
+    user: "telegraf:$PRIVILEGED_USER_ID"

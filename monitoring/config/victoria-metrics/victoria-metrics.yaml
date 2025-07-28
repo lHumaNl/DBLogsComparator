@@ -11,6 +11,15 @@ scrape_configs:
           environment: 'development'
     metrics_path: '/metrics'
 
+  - job_name: 'telegraf'
+    static_configs:
+      - targets: ['host.docker.internal:9273']
+        labels:
+          instance: 'os-metrics'
+          service: 'telegraf'
+          environment: 'development'
+    metrics_path: '/metrics'
+
   - job_name: 'victorialogs'
     static_configs:
       - targets: ['victorialogs:9428']
