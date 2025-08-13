@@ -41,20 +41,8 @@ func NewVictoriaLogsDB(baseURL string, options Options) (*VictoriaLogsDB, error)
 		TimeField: "timestamp", // Default value
 	}
 
-	// Create HTTP client with dynamic connection count
-	maxConns := options.ConnectionCount
-	if maxConns <= 0 {
-		maxConns = 100 // fallback default
-	}
-	db.httpClient = &http.Client{
-		Timeout: db.Timeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        maxConns,
-			MaxIdleConnsPerHost: maxConns,
-			MaxConnsPerHost:     maxConns,
-			IdleConnTimeout:     90 * time.Second,
-		},
-	}
+	// Use shared connection pool manager for generator
+	db.httpClient = GetGeneratorClient("victorialogs", baseURL, options)
 
 	// Add _time_field parameter if it's not already added
 	if db.TimeField != "" && !strings.Contains(db.URL, "_time_field=") {
@@ -88,9 +76,30 @@ func (db *VictoriaLogsDB) Name() string {
 // FormatPayload formats log entries in NDJSON format for VictoriaLogs
 func (db *VictoriaLogsDB) FormatPayload(logs []LogEntry) (string, string) {
 	var buf bytes.Buffer
+	return db.formatPayloadInternal(logs, &buf)
+}
+
+// FormatPayloadWithBuffer formats logs using provided buffer for efficiency
+func (db *VictoriaLogsDB) FormatPayloadWithBuffer(logs []LogEntry, buf *bytes.Buffer) (string, string) {
+	buf.Reset() // Clear the buffer
+	return db.formatPayloadInternal(logs, buf)
+}
+
+// formatPayloadInternal contains the shared formatting logic with optimized JSON encoding
+func (db *VictoriaLogsDB) formatPayloadInternal(logs []LogEntry, buf *bytes.Buffer) (string, string) {
+
+	// Create optimized JSON encoder for streaming NDJSON
+	encoder := json.NewEncoder(buf)
+	encoder.SetEscapeHTML(false) // Disable HTML escaping for performance
 
 	// For VictoriaLogs, each log should be on a separate line (NDJSON)
-	for i, log := range logs {
+	for _, originalLog := range logs {
+		// Create a copy to avoid modifying the original (thread safety improvement)
+		log := make(LogEntry, len(originalLog))
+		for k, v := range originalLog {
+			log[k] = v
+		}
+
 		// Ensure timestamp is in the correct ISO8601 format
 		if _, ok := log["timestamp"]; !ok {
 			log["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
@@ -106,15 +115,13 @@ func (db *VictoriaLogsDB) FormatPayload(logs []LogEntry) (string, string) {
 			log["message"] = fmt.Sprintf("Log message for %s", log["log_type"])
 		}
 
-		logJSON, err := json.Marshal(log)
-		if err != nil {
+		// Use streaming encoder (optimization: no intermediate []byte allocation)
+		if err := encoder.Encode(log); err != nil {
 			continue
 		}
 
-		buf.Write(logJSON)
-		if i < len(logs)-1 {
-			buf.WriteString("\n")
-		}
+		// Remove trailing newline from last entry if needed for specific format requirements
+		// Note: json.Encoder automatically adds newlines, which is what we want for NDJSON
 	}
 
 	// For VictoriaLogs, use content-type application/stream+json
@@ -161,13 +168,16 @@ func (db *VictoriaLogsDB) SendLogs(logs []LogEntry) error {
 		// Update metrics
 		db.UpdateMetric("request_duration", requestEnd.Sub(requestStart).Seconds())
 
+		// CRITICAL: Close response body even on error to prevent memory leaks
+		if resp != nil && resp.Body != nil {
+			defer resp.Body.Close()
+		}
+
 		if err != nil {
 			lastErr = err
 			db.IncrementMetric("failed_requests", 1)
 			continue
 		}
-
-		defer resp.Body.Close()
 
 		// Check response status
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -181,6 +191,69 @@ func (db *VictoriaLogsDB) SendLogs(logs []LogEntry) error {
 		body, _ := io.ReadAll(resp.Body)
 		lastErr = fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, body)
 		db.IncrementMetric("failed_requests", 1)
+
+		// If it's a server error (5xx), retry
+		// For client errors (4xx), there's no point in retrying
+		if resp.StatusCode < 500 {
+			return lastErr
+		}
+	}
+
+	return lastErr
+}
+
+// SendLogsWithBuffer sends logs using buffer pool for better performance
+func (db *VictoriaLogsDB) SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer) error {
+	if len(logs) == 0 {
+		return nil
+	}
+
+	payload, contentType := db.FormatPayloadWithBuffer(logs, buf)
+
+	var lastErr error
+
+	// Retry mechanism with exponential backoff
+	for attempt := 0; attempt <= db.RetryCount; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff
+			backoff := db.RetryDelay * time.Duration(1<<uint(attempt-1))
+			if db.Verbose {
+				fmt.Printf("VictoriaLogs: Retrying %d/%d after error: %v (backoff: %v)\n",
+					attempt, db.RetryCount, lastErr, backoff)
+			}
+			time.Sleep(backoff)
+		}
+
+		// Create the request
+		req, err := http.NewRequest("POST", db.URL+"/insert/jsonline", strings.NewReader(payload))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create request: %w", err)
+			continue
+		}
+
+		req.Header.Set("Content-Type", contentType)
+
+		// Send the request using the shared HTTP client (NOT creating new client every time)
+		resp, err := db.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			continue
+		}
+
+		// CRITICAL: Close response body to prevent memory leaks
+		if resp != nil && resp.Body != nil {
+			defer resp.Body.Close()
+		}
+
+		// Check response status
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			// Successful send
+			return nil
+		}
+
+		// Read response body to get error information
+		body, _ := io.ReadAll(resp.Body)
+		lastErr = fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, body)
 
 		// If it's a server error (5xx), retry
 		// For client errors (4xx), there's no point in retrying

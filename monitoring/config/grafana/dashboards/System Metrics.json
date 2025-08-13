@@ -550,7 +550,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "#299c46"
+                    "color": "#299c46",
+                    "value": null
                   },
                   {
                     "color": "rgba(237, 129, 40, 0.89)",
@@ -654,7 +655,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -785,7 +787,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -919,7 +922,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -2179,6 +2183,228 @@
           ],
           "title": "Memory (Container)",
           "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 2,
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "percentage",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 60
+                  },
+                  {
+                    "color": "dark-red",
+                    "value": 90
+                  }
+                ]
+              },
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 18
+          },
+          "id": 128,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "9.5.2",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "disableTextWrap": false,
+              "editorMode": "code",
+              "exemplar": false,
+              "expr": "docker_container_cpu_usage_percent{host=\"$host\"}",
+              "format": "time_series",
+              "fullMetaSearch": false,
+              "includeNullMetadata": true,
+              "instant": false,
+              "legendFormat": "{{container_name}}",
+              "range": true,
+              "refId": "A",
+              "useBackend": false
+            }
+          ],
+          "title": "CPU (Container)",
+          "transformations": [],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 2,
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "percentage",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "dark-yellow",
+                    "value": 60
+                  },
+                  {
+                    "color": "dark-red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 18
+          },
+          "id": 129,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "9.5.2",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "disableTextWrap": false,
+              "editorMode": "code",
+              "expr": "docker_container_mem_usage_percent{host=\"$host\"}",
+              "format": "time_series",
+              "fullMetaSearch": false,
+              "includeNullMetadata": true,
+              "instant": false,
+              "legendFormat": "{{container_name}}",
+              "range": true,
+              "refId": "A",
+              "useBackend": false
+            }
+          ],
+          "title": "Memory (Container)",
+          "type": "timeseries"
         }
       ],
       "title": "Docker Overall Usage",
@@ -2958,7 +3184,7 @@
       "type": "row"
     }
   ],
-  "refresh": false,
+  "refresh": "",
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
@@ -2968,7 +3194,7 @@
     "list": [
       {
         "current": {
-          "selected": false,
+          "selected": true,
           "text": "telegraf",
           "value": "telegraf"
         },
@@ -2995,7 +3221,7 @@
       },
       {
         "current": {
-          "selected": false,
+          "selected": true,
           "text": "logdbhost",
           "value": "logdbhost"
         },
@@ -3167,6 +3393,6 @@
   "timezone": "",
   "title": "System Metrics",
   "uid": "b4FAZ7Mmz",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

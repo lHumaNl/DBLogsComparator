@@ -30,9 +30,9 @@ show_help() {
     echo ""
     echo "Log systems:"
     echo "  monitoring  - Start only the monitoring system (VictoriaMetrics, Grafana, Grafana Renderer)"
-    echo "  elk         - Start ELK Stack (Elasticsearch + Kibana) and monitoring"
-    echo "  loki        - Start Loki and monitoring"
-    echo "  victorialogs - Start VictoriaLogs and monitoring"
+    echo "  elk         - Start ELK Stack (Elasticsearch + Kibana) without monitoring"
+    echo "  loki        - Start Loki without monitoring"
+    echo "  victorialogs - Start VictoriaLogs without monitoring"
     echo "  telegraf    - Start only Telegraf"
     echo "  all         - Only available with --down option to stop all systems"
     echo ""
@@ -41,8 +41,8 @@ show_help() {
     echo "  --querier       - Start the log querier after starting the log systems (native by default)"
     echo "  --combined      - Start the log combined after starting the log systems (native by default)"
     echo "  --docker        - Start the log tools with Docker (instead of native)"
-    echo "  --rebuild-native - Rebuild the load_tool before starting (only for native mode)"
-    echo "  --no-monitoring - Don't start or check monitoring system (ignored with 'monitoring' log system)"
+    echo "  --rebuild       - Rebuild the load_tool before starting (only for non-docker mode)"
+    echo "  --monitoring    - Start monitoring system along with the database"
     echo "  --stability     - Use stability load testing mode (default)"
     echo "  --maxPerf       - Use maxPerf load testing mode"
     echo "  --telegraf      - Start Telegraf for monitoring"
@@ -53,17 +53,17 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0 monitoring                      # Start only monitoring (VictoriaMetrics, Grafana)"
-    echo "  $0 elk                             # Start ELK Stack and monitoring"
-    echo "  $0 loki --generator                # Start Loki, monitoring, and native log generator"
-    echo "  $0 loki --generator --docker       # Start Loki, monitoring, and Docker log generator"
-    echo "  $0 loki --generator --maxPerf      # Start Loki, monitoring, and generator in maxPerf mode"
-    echo "  $0 loki --querier --rebuild-native # Start Loki, monitoring, and querier with rebuild"
-    echo "  $0 victorialogs --no-monitoring    # Start VictoriaLogs without monitoring"
-    echo "  $0 monitoring --telegraf           # Start monitoring and Telegraf"
+    echo "  $0 loki                            # Start only Loki (without monitoring)"
+    echo "  $0 loki --monitoring               # Start Loki with monitoring"
+    echo "  $0 loki --generator                # Start log generator only (without Loki DB)"
+    echo "  $0 loki --querier                  # Start log querier only (without Loki DB)"
+    echo "  $0 loki --combined                 # Start log combined only (without Loki DB)"
+    echo "  $0 loki --generator --monitoring   # Start Loki, monitoring, and generator"
+    echo "  $0 loki --generator --docker       # Start generator with Docker (without Loki DB)"
+    echo "  $0 loki --generator --maxPerf      # Start generator in maxPerf mode (without Loki DB)"
     echo "  $0 telegraf                        # Start only Telegraf"
     echo "  $0 telegraf --ignore_docker        # Start Telegraf, skip docker.sock check"
-    echo "  $0 loki --telegraf --ignore_docker # Start Loki, Telegraf, skip docker.sock check"
-    echo "  $0 elk --down                      # Stop ELK Stack but leave monitoring running"
+    echo "  $0 elk --down                      # Stop ELK Stack"
     echo "  $0 monitoring --down               # Stop the monitoring system"
     echo "  $0 telegraf --down                 # Stop Telegraf"
     echo "  $0 all --down                      # Stop all systems"
@@ -400,7 +400,7 @@ start_generator() {
         # Or rebuild if REBUILD_NATIVE is true
         if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ] || [ "$REBUILD_NATIVE" = "true" ]; then
             if [ "$REBUILD_NATIVE" = "true" ]; then
-                echo "Forced rebuild requested with --rebuild-native"
+                echo "Forced rebuild requested with --rebuild"
             else
                 echo "load_tool executable not found or doesn't have execution permissions"
             fi
@@ -486,7 +486,7 @@ start_querier() {
         # Or rebuild if REBUILD_NATIVE is true
         if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ] || [ "$REBUILD_NATIVE" = "true" ]; then
             if [ "$REBUILD_NATIVE" = "true" ]; then
-                echo "Forced rebuild requested with --rebuild-native"
+                echo "Forced rebuild requested with --rebuild"
             else
                 echo "load_tool executable not found or doesn't have execution permissions"
             fi
@@ -570,7 +570,7 @@ start_combined() {
         # Or rebuild if REBUILD_NATIVE is true
         if [ ! -f "./load_tool" ] || [ ! -x "./load_tool" ] || [ "$REBUILD_NATIVE" = "true" ]; then
             if [ "$REBUILD_NATIVE" = "true" ]; then
-                echo "Forced rebuild requested with --rebuild-native"
+                echo "Forced rebuild requested with --rebuild"
             else
                 echo "load_tool executable not found or doesn't have execution permissions"
             fi
@@ -662,6 +662,7 @@ LAUNCH_GENERATOR=false
 LAUNCH_QUERIER=false
 LAUNCH_COMBINED=false
 NO_MONITORING=false
+LAUNCH_MONITORING=false
 BRING_DOWN=false
 STOP_GENERATOR=false
 USE_NATIVE=true
@@ -682,9 +683,9 @@ for arg in "$@"; do
         --docker )      USE_NATIVE=false
                          USE_DOCKER=true
                          ;;
-        --rebuild-native ) REBUILD_NATIVE=true
+        --rebuild )     REBUILD_NATIVE=true
                          ;;
-        --no-monitoring ) NO_MONITORING=true
+        --monitoring )  LAUNCH_MONITORING=true
                          ;;
         --down )        BRING_DOWN=true
                          ;;
@@ -766,24 +767,38 @@ if $BRING_DOWN; then
     exit 0
 fi
 
+# Check if we need to start only load tools (without DB)
+START_ONLY_TOOLS=false
+if $LAUNCH_GENERATOR || $LAUNCH_QUERIER || $LAUNCH_COMBINED; then
+    if ! $LAUNCH_MONITORING; then
+        START_ONLY_TOOLS=true
+    fi
+fi
+
 # Start selected systems based on the specified argument
 case $DB_SYSTEM in
     monitoring )    start_monitoring
                     ;;
-    elk )           if ! $NO_MONITORING; then
-                        start_monitoring
+    elk )           if ! $START_ONLY_TOOLS; then
+                        if $LAUNCH_MONITORING; then
+                            start_monitoring
+                        fi
+                        start_elk
                     fi
-                    start_elk
                     ;;
-    loki )          if ! $NO_MONITORING; then
-                        start_monitoring
+    loki )          if ! $START_ONLY_TOOLS; then
+                        if $LAUNCH_MONITORING; then
+                            start_monitoring
+                        fi
+                        start_loki
                     fi
-                    start_loki
                     ;;
-    victorialogs )  if ! $NO_MONITORING; then
-                        start_monitoring
+    victorialogs )  if ! $START_ONLY_TOOLS; then
+                        if $LAUNCH_MONITORING; then
+                            start_monitoring
+                        fi
+                        start_victorialogs
                     fi
-                    start_victorialogs
                     ;;
     telegraf )      start_telegraf
                     ;;
@@ -813,7 +828,7 @@ fi
 echo "All systems started successfully!"
 
 # Output information about availability of monitoring
-if ! $NO_MONITORING || [ "$DB_SYSTEM" = "monitoring" ]; then
+if $LAUNCH_MONITORING || [ "$DB_SYSTEM" = "monitoring" ]; then
     echo "Monitoring is available at:"
     echo "  - Grafana: http://localhost:${GRAFANA_PORT} (${GRAFANA_ADMIN_USER}/${GRAFANA_ADMIN_PASSWORD})"
     echo "  - VictoriaMetrics: http://localhost:${VICTORIA_METRICS_PORT}/vmui/"

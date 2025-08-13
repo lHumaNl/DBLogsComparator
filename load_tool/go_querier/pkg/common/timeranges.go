@@ -2,12 +2,12 @@ package common
 
 import (
 	"fmt"
-	"math/rand"
 	"strconv"
 	"strings"
 	"time"
 
 	config "github.com/dblogscomparator/DBLogsComparator/load_tool/common"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 )
 
 // TimeRange represents a time range for log queries
@@ -86,7 +86,7 @@ func (g *TimeRangeGenerator) GenerateTimeRange(rangeType TimeRangeType) TimeRang
 
 // GenerateRandomTimeRange creates a completely random time range of any type
 func (g *TimeRangeGenerator) GenerateRandomTimeRange() TimeRange {
-	rangeType := TimeRangeType(rand.Intn(4))
+	rangeType := TimeRangeType(logdata.RandomIntn(4))
 	return g.GenerateTimeRange(rangeType)
 }
 
@@ -97,20 +97,8 @@ func (g *TimeRangeGenerator) GenerateConfiguredTimeRange() TimeRange {
 		return g.GenerateRandomTimeRange()
 	}
 
-	// Calculate total weight for all time ranges
-	totalWeight := g.timeConfig.Last5m + g.timeConfig.Last15m + g.timeConfig.Last30m +
-		g.timeConfig.Last1h + g.timeConfig.Last2h + g.timeConfig.Last4h + g.timeConfig.Last8h +
-		g.timeConfig.Last12h + g.timeConfig.Last24h + g.timeConfig.Last48h + g.timeConfig.Last72h
-
-	// Add custom range weights
-	customWeight := 0.0
-	for _, weight := range g.timeConfig.Custom.PercentsOffsetLeftBorder {
-		customWeight += weight
-	}
-	totalWeight += customWeight
-
-	// Generate random number
-	randomValue := rand.Float64() * totalWeight
+	// Generate random number (0-100 for percentage)
+	randomValue := logdata.RandomFloat64() * 100.0
 	currentWeight := 0.0
 
 	// Check predefined ranges
@@ -147,8 +135,90 @@ func (g *TimeRangeGenerator) GenerateConfiguredTimeRange() TimeRange {
 		}
 	}
 
-	// If we reach here, generate custom range
-	return g.generateConfiguredCustomTimeRange()
+	// Check custom_period
+	if g.timeConfig.CustomPeriod.Percent > 0 {
+		currentWeight += g.timeConfig.CustomPeriod.Percent
+		if randomValue <= currentWeight {
+			return g.generateCustomPeriodTimeRange()
+		}
+	}
+
+	// Check custom range
+	if g.timeConfig.Custom.Percent > 0 {
+		currentWeight += g.timeConfig.Custom.Percent
+		if randomValue <= currentWeight {
+			return g.generateConfiguredCustomTimeRange()
+		}
+	}
+
+	// Fallback to first predefined range if all weights don't add up
+	end := g.currentTime
+	start := end.Add(-15 * time.Minute)
+	return TimeRange{
+		Start:       start,
+		End:         end,
+		Description: "Last 15m (fallback)",
+		StringRepr:  "Last 15m (fallback)",
+		IsCustom:    false,
+	}
+}
+
+// generateCustomPeriodTimeRange generates a time range within custom period based on configuration
+func (g *TimeRangeGenerator) generateCustomPeriodTimeRange() TimeRange {
+	// Parse period dates - these should be pre-validated during config loading
+	periodStart, err := time.Parse("02.01.2006 15:04:05", g.timeConfig.CustomPeriod.PeriodStart)
+	if err != nil {
+		panic(fmt.Sprintf("invalid period_start format '%s': %v (this should have been caught during config validation)", g.timeConfig.CustomPeriod.PeriodStart, err))
+	}
+
+	periodEnd, err := time.Parse("02.01.2006 15:04:05", g.timeConfig.CustomPeriod.PeriodEnd)
+	if err != nil {
+		panic(fmt.Sprintf("invalid period_end format '%s': %v (this should have been caught during config validation)", g.timeConfig.CustomPeriod.PeriodEnd, err))
+	}
+
+	// Select duration based on weights
+	durationStr := g.selectWeightedDuration(g.timeConfig.CustomPeriod.Times)
+	durationMin := g.parseDurationToMinutes(durationStr)
+	duration := time.Duration(durationMin) * time.Minute
+
+	// Generate random start time within the period
+	periodDuration := periodEnd.Sub(periodStart)
+	maxStartOffset := periodDuration - duration
+
+	// If duration is longer than period, use the entire period
+	if maxStartOffset < 0 {
+		return TimeRange{
+			Start:       periodStart,
+			End:         periodEnd,
+			Description: fmt.Sprintf("Custom Period (Full: %s)", durationStr),
+			StringRepr:  fmt.Sprintf("Custom Period (Full: %s)", durationStr),
+			IsCustom:    true,
+		}
+	}
+
+	// Generate random offset within valid range
+	startOffset := time.Duration(logdata.RandomFloat64() * float64(maxStartOffset))
+	start := periodStart.Add(startOffset)
+	end := start.Add(duration)
+
+	// Ensure end doesn't exceed period end (should not happen due to calculation above)
+	if end.After(periodEnd) {
+		end = periodEnd
+		start = end.Add(-duration)
+	}
+
+	description := fmt.Sprintf("Custom Period (%s): %s to %s",
+		durationStr,
+		start.Format("02.01.2006 15:04"),
+		end.Format("02.01.2006 15:04"))
+
+	return TimeRange{
+		Start:       start,
+		End:         end,
+		Description: description,
+		StringRepr:  fmt.Sprintf("Custom Period (%s)", durationStr),
+		IsCustom:    true,
+	}
 }
 
 // generateConfiguredCustomTimeRange generates a custom time range based on configuration
@@ -191,7 +261,7 @@ func (g *TimeRangeGenerator) selectWeightedDuration(weightMap map[string]float64
 		totalWeight += weight
 	}
 
-	randomValue := rand.Float64() * totalWeight
+	randomValue := logdata.RandomFloat64() * totalWeight
 	currentWeight := 0.0
 
 	for duration, weight := range weightMap {
@@ -236,7 +306,7 @@ func (g *TimeRangeGenerator) generateRelativeTimeRange() TimeRange {
 	durations := []int{5, 15, 30, 60, 180, 360, 720, 1440, 4320, 10080} // 5m, 15m, 30m, 1h, 3h, 6h, 12h, 24h, 3d, 7d
 
 	// Pick a random duration
-	durationMinutes := durations[rand.Intn(len(durations))]
+	durationMinutes := durations[logdata.RandomIntn(len(durations))]
 
 	// Calculate the start and end times
 	end := g.currentTime
@@ -267,7 +337,7 @@ func (g *TimeRangeGenerator) generateAbsoluteTimeRange() TimeRange {
 	maxDaysBack := 7
 
 	// Random number of days to go back (1-7)
-	daysBack := rand.Intn(maxDaysBack) + 1
+	daysBack := logdata.RandomIntn(maxDaysBack) + 1
 
 	// Generate a random start time from the past
 	dayOffset := time.Duration(-daysBack) * 24 * time.Hour
@@ -276,9 +346,9 @@ func (g *TimeRangeGenerator) generateAbsoluteTimeRange() TimeRange {
 	baseDay := g.currentTime.Add(dayOffset)
 
 	// Start time is at a random hour between 0-20
-	startHour := rand.Intn(21)
+	startHour := logdata.RandomIntn(21)
 	// Random minute
-	startMinute := rand.Intn(60)
+	startMinute := logdata.RandomIntn(60)
 
 	// Create start time
 	start := time.Date(
@@ -292,7 +362,7 @@ func (g *TimeRangeGenerator) generateAbsoluteTimeRange() TimeRange {
 	)
 
 	// Duration of the range (1-4 hours)
-	durationHours := rand.Intn(4) + 1
+	durationHours := logdata.RandomIntn(4) + 1
 
 	// Ensure we don't go beyond current time
 	potentialEnd := start.Add(time.Duration(durationHours) * time.Hour)
@@ -339,8 +409,8 @@ func (g *TimeRangeGenerator) generateTodayTimeRange() TimeRange {
 		maxStartHour = 0
 	}
 
-	startHour := rand.Intn(maxStartHour + 1)
-	startMinute := rand.Intn(60)
+	startHour := logdata.RandomIntn(maxStartHour + 1)
+	startMinute := logdata.RandomIntn(60)
 
 	// Create start time
 	start := todayStart.Add(time.Duration(startHour)*time.Hour + time.Duration(startMinute)*time.Minute)
@@ -353,8 +423,8 @@ func (g *TimeRangeGenerator) generateTodayTimeRange() TimeRange {
 	} else {
 		// Otherwise, random end time between start and now
 		maxEndHour := now.Hour()
-		endHour := startHour + rand.Intn(maxEndHour-startHour) + 1
-		endMinute := rand.Intn(60)
+		endHour := startHour + logdata.RandomIntn(maxEndHour-startHour) + 1
+		endMinute := logdata.RandomIntn(60)
 
 		potentialEnd := todayStart.Add(time.Duration(endHour)*time.Hour + time.Duration(endMinute)*time.Minute)
 		if potentialEnd.After(now) {
@@ -387,18 +457,18 @@ func (g *TimeRangeGenerator) generateYesterdayTimeRange() TimeRange {
 	yesterdayStart := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, now.Location())
 
 	// Random start hour (0-23)
-	startHour := rand.Intn(24)
-	startMinute := rand.Intn(60)
+	startHour := logdata.RandomIntn(24)
+	startMinute := logdata.RandomIntn(60)
 
 	// Create start time
 	start := yesterdayStart.Add(time.Duration(startHour)*time.Hour + time.Duration(startMinute)*time.Minute)
 
 	// Random duration (1-4 hours)
-	durationHours := rand.Intn(4) + 1
+	durationHours := logdata.RandomIntn(4) + 1
 
 	// End time
 	endHour := startHour + durationHours
-	endMinute := rand.Intn(60)
+	endMinute := logdata.RandomIntn(60)
 
 	var end time.Time
 	if endHour < 24 {
@@ -437,13 +507,13 @@ func FormatTimeRFC3339(t time.Time) string {
 // GetRandomQuantile returns a random quantile value for query systems
 func GetRandomQuantile() string {
 	quantiles := []string{"0.5", "0.75", "0.9", "0.95", "0.99"}
-	return quantiles[rand.Intn(len(quantiles))]
+	return quantiles[logdata.RandomIntn(len(quantiles))]
 }
 
 // GetRandomQuantileFloat returns a random quantile value as float64 for Elasticsearch
 func GetRandomQuantileFloat() float64 {
 	quantiles := []float64{0.5, 0.75, 0.9, 0.95, 0.99}
-	return quantiles[rand.Intn(len(quantiles))]
+	return quantiles[logdata.RandomIntn(len(quantiles))]
 }
 
 // GetUniqueRandomQuantiles returns a slice of unique random quantile values
@@ -458,7 +528,7 @@ func GetUniqueRandomQuantiles(count int) []float64 {
 	copy(shuffled, quantiles)
 
 	for i := len(shuffled) - 1; i > 0; i-- {
-		j := rand.Intn(i + 1)
+		j := logdata.RandomIntn(i + 1)
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	}
 

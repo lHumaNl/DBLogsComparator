@@ -19,7 +19,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 2,
+  "id": 1,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -199,7 +199,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "sum(dblogscomp_generator_throughput_logs_per_second{job=~\"$job\", system=~\"$system\", log_type=\"all\"})",
+              "expr": "dblogscomp_current_rps{job=~\"$job\", system=~\"$system\", component=~\"generator\"} * on(system) group_left dblogscomp_generator_batch_size{system=~\"$system\"}",
               "legendFormat": "{{system}}",
               "range": true,
               "refId": "A"
@@ -413,8 +413,8 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "dblogscomp_generator_throughput_logs_per_second{job=~\"$job\", system=~\"$system\", log_type=\"all\"}",
-              "legendFormat": "{{system}} (All)",
+              "expr": "dblogscomp_current_rps{job=~\"$job\", system=~\"$system\", component=~\"generator\"} * on(system) group_left dblogscomp_generator_batch_size{system=~\"$system\"}",
+              "legendFormat": "{{system}} (Logs)",
               "range": true,
               "refId": "A"
             },
@@ -424,14 +424,14 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "dblogscomp_generator_throughput_logs_per_second{job=~\"$job\", system=~\"$system\", log_type!=\"all\"}",
+              "expr": "dblogscomp_current_rps{job=~\"$job\", system=~\"$system\", component=~\"generator\"}",
               "hide": false,
-              "legendFormat": "{{log_type}} - {{system}}",
+              "legendFormat": "{{system}} (Requests)",
               "range": true,
               "refId": "B"
             }
           ],
-          "title": "Logs per Second by Type",
+          "title": "Logs\\Requests per Second by Type",
           "type": "timeseries"
         },
         {
@@ -603,19 +603,20 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
-              "unit": "short"
+              "unit": "reqps"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 10,
+            "h": 9,
             "w": 12,
             "x": 0,
-            "y": 2
+            "y": 27
           },
           "id": 6,
           "options": {
@@ -642,13 +643,25 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "sum by (system) (dblogscomp_generator_throughput_logs_per_second{job=~\"$job\", system=~\"$system\", log_type=\"all\"})",
-              "legendFormat": "{{system}}",
+              "expr": "dblogscomp_current_rps{job=~\"$job\", system=~\"$system\", component=~\"generator\"} * on(system) group_left dblogscomp_generator_batch_size{system=~\"$system\"}",
+              "legendFormat": "{{system}} (LPS)",
               "range": true,
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "dblogscomp_current_rps{job=~\"$job\", system=~\"$system\", component=~\"generator\"}",
+              "hide": false,
+              "legendFormat": "{{system}} (RPS)",
+              "range": true,
+              "refId": "B"
             }
           ],
-          "title": "Generator Throughput (Total)",
+          "title": "Generator RPS\\LPS (Total)",
           "type": "timeseries"
         },
         {
@@ -656,7 +669,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "description": "Generator throughput broken down by log type and system. Useful for understanding which log types have highest throughput.",
+          "description": "Total throughput of log generation per system. Shows how many logs per second each logging system is receiving.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -678,7 +691,7 @@
                   "viz": false
                 },
                 "lineInterpolation": "linear",
-                "lineWidth": 1,
+                "lineWidth": 2,
                 "pointSize": 5,
                 "scaleDistribution": {
                   "type": "linear"
@@ -698,21 +711,22 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
-              "unit": "short"
+              "unit": "reqps"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 10,
+            "h": 9,
             "w": 12,
             "x": 12,
-            "y": 2
+            "y": 27
           },
-          "id": 7,
+          "id": 58,
           "options": {
             "legend": {
               "calcs": [
@@ -737,13 +751,14 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "dblogscomp_generator_throughput_logs_per_second{job=~\"$job\", system=~\"$system\", log_type!=\"all\"}",
-              "legendFormat": "{{log_type}} - {{system}}",
+              "expr": "rate(dblogscomp_generator_logs_sent_total{job=~\"$job\", system=~\"$system\"})[$interval]",
+              "hide": false,
+              "legendFormat": "{{system}} {{log_type}}",
               "range": true,
-              "refId": "A"
+              "refId": "B"
             }
           ],
-          "title": "Generator Throughput by Log Type",
+          "title": "Generator LPS by Type (Total)",
           "type": "timeseries"
         },
         {
@@ -793,11 +808,12 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
-              "unit": "short"
+              "unit": "reqps"
             },
             "overrides": []
           },
@@ -805,7 +821,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 12
+            "y": 36
           },
           "id": 8,
           "options": {
@@ -838,7 +854,7 @@
               "refId": "A"
             }
           ],
-          "title": "Querier Throughput (Total)",
+          "title": "Querier RPS (Total)",
           "type": "timeseries"
         },
         {
@@ -888,11 +904,12 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
-              "unit": "short"
+              "unit": "reqps"
             },
             "overrides": []
           },
@@ -900,7 +917,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 12
+            "y": 36
           },
           "id": 9,
           "options": {
@@ -933,11 +950,11 @@
               "refId": "A"
             }
           ],
-          "title": "Querier Throughput by Type",
+          "title": "Querier RPS by Type",
           "type": "timeseries"
         }
       ],
-      "title": "Throughput Analysis",
+      "title": "RPS Analysis",
       "type": "row"
     },
     {
@@ -1055,7 +1072,7 @@
             "h": 10,
             "w": 12,
             "x": 0,
-            "y": 3
+            "y": 49
           },
           "id": 11,
           "options": {
@@ -1082,7 +1099,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "rate(sum(dblogscomp_read_requests_success{job=~\"$job\", system=~\"$system\"}) by (system)[$interval])",
+              "expr": "rate(sum(dblogscomp_write_requests_success{job=~\"$job\", system=~\"$system\"}) by (system)[$interval])",
               "legendFormat": "{{system}}",
               "range": true,
               "refId": "A"
@@ -1158,7 +1175,7 @@
             "h": 10,
             "w": 12,
             "x": 12,
-            "y": 3
+            "y": 49
           },
           "id": 12,
           "options": {
@@ -1192,250 +1209,6 @@
             }
           ],
           "title": "Write Error Rate (Total)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "description": "Rate of successful write requests per system. Higher values indicate better write performance and system reliability.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              },
-              "unit": "reqps"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "elasticsearch"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "green",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "loki"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "blue",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "victorialogs"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "orange",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 12,
-            "x": 0,
-            "y": 13
-          },
-          "id": 49,
-          "options": {
-            "legend": {
-              "calcs": [
-                "min",
-                "max",
-                "mean",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "rate(dblogscomp_write_requests_success{job=~\"$job\", system=~\"$system\"}[$interval])",
-              "legendFormat": "{{system}} - {{log_type}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Write Success Rate (By type)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "description": "Rate of failed write requests per system and error type. Lower values indicate better reliability. Monitor for spikes which may indicate system issues.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "yellow",
-                    "value": 1
-                  },
-                  {
-                    "color": "red",
-                    "value": 5
-                  }
-                ]
-              },
-              "unit": "reqps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 12,
-            "x": 12,
-            "y": 13
-          },
-          "id": 50,
-          "options": {
-            "legend": {
-              "calcs": [
-                "min",
-                "max",
-                "mean",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "rate(dblogscomp_write_requests_failure{job=~\"$job\", system=~\"$system\"}[$interval])",
-              "legendFormat": "{{system}} - {{error_type}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Write Error Rate (By type)",
           "type": "timeseries"
         },
         {
@@ -1543,7 +1316,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 23
+            "y": 59
           },
           "id": 13,
           "options": {
@@ -1646,7 +1419,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 23
+            "y": 59
           },
           "id": 14,
           "options": {
@@ -1787,7 +1560,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 34
+            "y": 70
           },
           "id": 52,
           "options": {
@@ -1890,7 +1663,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 34
+            "y": 70
           },
           "id": 53,
           "options": {
@@ -2007,7 +1780,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 4
+            "y": 50
           },
           "id": 16,
           "options": {
@@ -2102,7 +1875,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 4
+            "y": 50
           },
           "id": 18,
           "options": {
@@ -2168,152 +1941,6 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "description": "Cumulative count of logs sent by type and system since start. Shows total volume processed. Use to understand log type distribution and total throughput over time.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                }
-              },
-              "mappings": [],
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 12,
-            "w": 12,
-            "x": 0,
-            "y": 5
-          },
-          "id": 21,
-          "options": {
-            "displayLabels": [
-              "name",
-              "value"
-            ],
-            "legend": {
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "values": [
-                "value"
-              ]
-            },
-            "pieType": "pie",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "dblogscomp_generator_logs_sent_total{job=~\"$job\", system=~\"$system\"}",
-              "legendFormat": "{{log_type}} - {{system}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Total Logs Sent",
-          "type": "piechart"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "description": "Cumulative count of queries sent by type and system since start. Shows total query volume and distribution. Use to understand query patterns and system usage.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                }
-              },
-              "mappings": [],
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 12,
-            "w": 12,
-            "x": 12,
-            "y": 5
-          },
-          "id": 22,
-          "options": {
-            "displayLabels": [
-              "name",
-              "value"
-            ],
-            "legend": {
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "values": [
-                "value"
-              ]
-            },
-            "pieType": "pie",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "dblogscomp_querier_query_type_total{job=~\"$job\", system=~\"$system\"}",
-              "legendFormat": "{{type}} - {{system}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Total Queries Sent",
-          "type": "piechart"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
           "description": "Time series showing cumulative logs sent over time by system and log type. Useful for tracking progress and identifying periods of high activity.",
           "fieldConfig": {
             "defaults": {
@@ -2368,7 +1995,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 17
+            "y": 51
           },
           "id": 23,
           "options": {
@@ -2405,7 +2032,7 @@
           "type": "timeseries"
         }
       ],
-      "title": "Configuration & Volume",
+      "title": "Logs Sent Over Time",
       "type": "row"
     },
     {
@@ -2465,8 +2092,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -2615,8 +2241,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -2663,7 +2288,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile($percentile, rate(dblogscomp_write_duration_seconds_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
+              "expr": "dblogscomp_write_duration_seconds{job=~\"$job\", system=~\"$system\", quantile=\"$percentile\"}",
               "legendFormat": "{{status}} ($percentile) - {{system}}",
               "range": true,
               "refId": "A"
@@ -2719,8 +2344,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -2823,8 +2447,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   },
                   {
                     "color": "yellow",
@@ -2941,8 +2564,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   }
                 ]
               },
@@ -3037,8 +2659,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   }
                 ]
               },
@@ -3133,8 +2754,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   }
                 ]
               },
@@ -3173,7 +2793,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile($percentile, rate(dblogscomp_querier_result_hits_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
+              "expr": "dblogscomp_querier_result_hits{job=~\"$job\", system=~\"$system\", quantile=\"$percentile\"}",
               "hide": false,
               "legendFormat": "{{system}} - {{type}} ($percentile)",
               "range": true,
@@ -3230,8 +2850,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green",
-                    "value": null
+                    "color": "green"
                   }
                 ]
               },
@@ -3270,7 +2889,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile($percentile, rate(dblogscomp_querier_result_size_bytes_bucket{job=~\"$job\", system=~\"$system\"}[$interval]))",
+              "expr": "dblogscomp_querier_result_size_bytes{job=~\"$job\", system=~\"$system\", quantile=\"$percentile\"}",
               "legendFormat": "{{system}} - {{type}} ($percentile)",
               "range": true,
               "refId": "A"
@@ -3327,7 +2946,8 @@
           "options": {
             "displayLabels": [
               "name",
-              "value"
+              "value",
+              "percent"
             ],
             "legend": {
               "displayMode": "table",
@@ -3401,7 +3021,8 @@
           "options": {
             "displayLabels": [
               "name",
-              "value"
+              "value",
+              "percent"
             ],
             "legend": {
               "displayMode": "table",
@@ -4570,7 +4191,7 @@
       },
       {
         "current": {
-          "selected": true,
+          "selected": false,
           "text": [
             "All"
           ],
@@ -4626,9 +4247,9 @@
       },
       {
         "current": {
-          "selected": true,
-          "text": "1m",
-          "value": "1m"
+          "selected": false,
+          "text": "30s",
+          "value": "30s"
         },
         "hide": 0,
         "includeAll": false,
@@ -4637,7 +4258,17 @@
         "name": "interval",
         "options": [
           {
+            "selected": false,
+            "text": "15s",
+            "value": "15s"
+          },
+          {
             "selected": true,
+            "text": "30s",
+            "value": "30s"
+          },
+          {
+            "selected": false,
             "text": "1m",
             "value": "1m"
           },
@@ -4662,7 +4293,7 @@
             "value": "15m"
           }
         ],
-        "query": "1m,2m,5m,10m,15m",
+        "query": "15s,30s,1m,2m,5m,10m,15m",
         "queryValue": "",
         "refresh": 0,
         "regex": "",
@@ -4672,9 +4303,9 @@
       },
       {
         "current": {
-          "selected": true,
-          "text": "0.75",
-          "value": "0.75"
+          "selected": false,
+          "text": "0.9",
+          "value": "0.9"
         },
         "hide": 0,
         "includeAll": false,
@@ -4688,12 +4319,12 @@
             "value": "0.5"
           },
           {
-            "selected": true,
+            "selected": false,
             "text": "0.75",
             "value": "0.75"
           },
           {
-            "selected": false,
+            "selected": true,
             "text": "0.9",
             "value": "0.9"
           },
@@ -4716,13 +4347,13 @@
     ]
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "LogGenerator Metrics",
   "uid": "go-log-generator",
-  "version": 21,
+  "version": 2,
   "weekStart": ""
 }

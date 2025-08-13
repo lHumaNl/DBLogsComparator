@@ -41,8 +41,6 @@ func main() {
 	// Command line parameters
 	configPath := flag.String("config", defaultConfigPath, "Path to YAML configuration file")
 	hostsPath := flag.String("hosts", defaultHostsPath, "Path to file with logging system URLs")
-	legacyMode := flag.Bool("legacy", false, "Use command line arguments mode instead of YAML")
-	defaultConfig := flag.Bool("default-config", false, "Create default configuration and exit")
 
 	// Add new flags
 	system := flag.String("system", "", "Logging system: loki, elasticsearch, victoria (required parameter)")
@@ -53,7 +51,7 @@ func main() {
 	flag.Parse()
 
 	// Check for required system parameter
-	if *system == "" && !*defaultConfig && !*legacyMode {
+	if *system == "" {
 		// Check if LOG_DB environment variable exists
 		envSystem := os.Getenv("LOG_DB")
 		if envSystem != "" {
@@ -68,27 +66,10 @@ func main() {
 		}
 	}
 
-	// Create default configuration if requested
-	if *defaultConfig {
-		config := getDefaultConfig()
-		if err := common.SaveConfig(config, *configPath); err != nil {
-			log.Fatalf("Error creating default configuration: %v", err)
-		}
-		fmt.Printf("Default configuration created in file: %s\n", *configPath)
-		return
-	}
-
 	// Determine directory with current executable
 	execDir, err := filepath.Abs(filepath.Dir(os.Args[0]))
 	if err != nil {
 		log.Fatalf("Failed to determine current directory: %v", err)
-	}
-
-	// If legacy mode requested, use command line arguments
-	if *legacyMode {
-		log.Println("Starting in legacy mode using command line arguments")
-		runInLegacyMode()
-		return
 	}
 
 	// Load configuration from YAML
@@ -191,13 +172,13 @@ func main() {
 
 	// Create structure for statistics
 	stats := &common.Stats{
-		StartTime: time.Now(),
+		// StartTime will be set by the generator just before starting
 	}
 
 	// Initialize structured logger
-	verbose := (config.Mode == modeGeneratorOnly && config.Generator.Verbose) ||
-		(config.Mode == modeQuerierOnly && config.Querier.Verbose) ||
-		(config.Mode == modeCombined && (config.Generator.Verbose || config.Querier.Verbose))
+	verbose := (config.Mode == modeGeneratorOnly && config.Generator.IsVerbose(config.Verbose)) ||
+		(config.Mode == modeQuerierOnly && config.Querier.IsVerbose(config.Verbose)) ||
+		(config.Mode == modeCombined && (config.Generator.IsVerbose(config.Verbose) || config.Querier.IsVerbose(config.Verbose)))
 	common.InitTextLogger(verbose)
 
 	// Initialize Prometheus metrics if enabled
@@ -261,6 +242,9 @@ func main() {
 		default:
 			log.Fatalf("Unknown operation mode: %s", config.Mode)
 		}
+
+		// IMPORTANT: Stop metrics server in fallback mode (when not using load test modes)
+		common.StopMetricsServer()
 	}
 }
 
@@ -272,6 +256,19 @@ func getDefaultConfig() *common.Config {
 		DurationSeconds: 60,
 		Metrics:         true,
 		MetricsPort:     9090,
+		Combined: common.CombinedConfig{
+			MaxPerf: common.LoadTestConfig{
+				Steps:        3,
+				StepDuration: 10,
+				Impact:       2,
+				// Note: BaseRPS, StartPercent, IncrementPercent taken from generator/querier sections
+			},
+			Stability: common.LoadTestConfig{
+				StepDuration: 10,
+				Impact:       5,
+				// Note: BaseRPS, StepPercent taken from generator/querier sections
+			},
+		},
 		Generator: common.GeneratorConfig{
 			URLLoki:     "http://loki:3100",
 			URLES:       "http://elasticsearch:9200",
@@ -290,7 +287,7 @@ func getDefaultConfig() *common.Config {
 			MaxRetries:   3,
 			RetryDelayMs: 500,
 			TimeoutMs:    30000, // 30 seconds
-			Verbose:      false,
+			Verbose:      nil,   // Use global setting
 			// Load testing configurations
 			MaxPerf: common.LoadTestConfig{
 				Steps:            20,
@@ -316,7 +313,7 @@ func getDefaultConfig() *common.Config {
 			MaxRetries:   3,
 			RetryDelayMs: 500,
 			TimeoutMs:    10000, // 10 seconds
-			Verbose:      false,
+			Verbose:      nil,   // Use global setting
 			Distribution: map[string]int{
 				"exact_match":   30,
 				"time_range":    40,
@@ -342,158 +339,20 @@ func getDefaultConfig() *common.Config {
 	}
 }
 
-// Running in command line arguments mode (legacy)
-func runInLegacyMode() {
-	// Main flags
-	mode := flag.String("mode", "generator", "Operation mode: generator (generation only), querier (queries only), combined (generation and queries)")
-	system := flag.String("system", "victoria", "Logging system: loki, elasticsearch, victoria")
-
-	// Common parameters
-	duration := flag.Int("duration", 60, "Operation duration (in seconds, 0 = infinite)")
-
-	// Parameters for generation mode
-	rps := flag.Int("rps", 100, "Requests per second (for generator)")
-	bulkSize := flag.Int("bulk-size", 10, "Number of logs in one request")
-	// workerCount flag removed - using CPU-based allocation
-	// connectionCount flag removed - using dynamic CPU-based allocation
-	maxRetries := flag.Int("max-retries", 3, "Maximum number of retry attempts")
-	retryDelay := flag.Int("retry-delay", 500, "Delay between retry attempts (in milliseconds)")
-	verbose := flag.Bool("verbose", false, "Verbose output")
-
-	// Log type weights
-	webAccessWeight := flag.Int("web-access-weight", 60, "Weight of web_access logs")
-	webErrorWeight := flag.Int("web-error-weight", 10, "Weight of web_error logs")
-	applicationWeight := flag.Int("application-weight", 20, "Weight of application logs")
-	eventWeight := flag.Int("event-weight", 5, "Weight of event logs")
-	metricWeight := flag.Int("metric-weight", 5, "Weight of metric logs")
-
-	// Parameters for query mode
-	qps := flag.Int("qps", 10, "Queries per second (for query client)")
-
-	// Query type weights
-	exactMatchWeight := flag.Int("exact-match-weight", 30, "Weight of exact_match queries")
-	timeRangeWeight := flag.Int("time-range-weight", 40, "Weight of time_range queries")
-	labelFilterWeight := flag.Int("label-filter-weight", 20, "Weight of label_filter queries")
-	complexQueryWeight := flag.Int("complex-query-weight", 10, "Weight of complex_query queries")
-
-	// Metrics parameters
-	metricsEnabled := flag.Bool("enable-metrics", true, "Enable Prometheus metrics")
-	metricsPort := flag.Int("metrics-port", 9090, "Port for Prometheus metrics server")
-
-	// Re-parse flags, as they were already parsed above
-	flag.CommandLine.Parse(os.Args[1:])
-
-	// Create configuration based on command line arguments
-	config := &common.Config{
-		Mode:            *mode,
-		System:          *system,
-		DurationSeconds: *duration,
-		Metrics:         *metricsEnabled,
-		MetricsPort:     *metricsPort,
-		Generator: common.GeneratorConfig{
-			URLLoki:     "http://loki:3100",
-			URLES:       "http://elasticsearch:9200",
-			URLVictoria: "http://victorialogs:9428",
-			RPS:         *rps,
-			BulkSize:    *bulkSize,
-			// WorkerCount removed - using CPU-based allocation
-			// ConnectionCount removed - using dynamic CPU-based allocation
-			Distribution: map[string]int{
-				"web_access":  *webAccessWeight,
-				"web_error":   *webErrorWeight,
-				"application": *applicationWeight,
-				"event":       *eventWeight,
-				"metric":      *metricWeight,
-			},
-			MaxRetries:   *maxRetries,
-			RetryDelayMs: *retryDelay,
-			Verbose:      *verbose,
-		},
-		Querier: common.QuerierConfig{
-			URLLoki:     "http://loki:3100",
-			URLES:       "http://elasticsearch:9200",
-			URLVictoria: "http://victorialogs:9428",
-			RPS:         *qps,
-			// WorkerCount removed - using CPU-based allocation
-			MaxRetries:   *maxRetries,
-			RetryDelayMs: *retryDelay,
-			Verbose:      *verbose,
-			Distribution: map[string]int{
-				"exact_match":   *exactMatchWeight,
-				"time_range":    *timeRangeWeight,
-				"label_filter":  *labelFilterWeight,
-				"complex_query": *complexQueryWeight,
-			},
-		},
-	}
-
-	// Create structure for statistics
-	stats := &common.Stats{
-		StartTime: time.Now(),
-	}
-
-	// Start required components depending on mode
-	switch *mode {
-	case modeGeneratorOnly:
-		fmt.Println("Starting in log generator mode (legacy)")
-		runGeneratorWithConfig(config, stats)
-	case modeQuerierOnly:
-		fmt.Println("Starting in query client mode (legacy)")
-		runQuerierWithConfig(config, stats)
-	case modeCombined:
-		fmt.Println("Starting in combined mode - generator and queries (legacy)")
-
-		// Create context for coordinating both components
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		var wg sync.WaitGroup
-
-		// Start generator in background
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer log.Println("Generator stopped (legacy)")
-			runGeneratorWithContextConfig(ctx, config, stats)
-		}()
-
-		// Start querier in foreground
-		if err := runQuerierWithConfig(config, stats); err != nil {
-			log.Printf("Querier error (legacy): %v", err)
-			cancel() // Stop generator
-		} else {
-			cancel() // Stop generator when querier finishes normally
-		}
-
-		// Wait for generator to finish
-		wg.Wait()
-		log.Println("Combined mode finished (legacy)")
-	default:
-		log.Fatalf("Unknown operation mode: %s", *mode)
-	}
-}
-
 // Function to start log generator with new configuration
 func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
-	generatorConfig := generator.Config{
-		Mode:     "default",
-		BaseURL:  cfg.Generator.GetURL(cfg.System),
-		URL:      cfg.Generator.GetURL(cfg.System),
-		RPS:      cfg.Generator.RPS,
-		Duration: time.Duration(cfg.DurationSeconds) * time.Second,
-		BulkSize: cfg.Generator.BulkSize,
-		// WorkerCount removed - using CPU-based allocation
-		// ConnectionCount removed - using dynamic CPU-based allocation in logdb
-		LogTypeDistribution: cfg.Generator.Distribution, // Adding log type distribution from configuration
-		MaxRetries:          cfg.Generator.MaxRetries,
-		RetryDelay:          time.Duration(cfg.Generator.RetryDelayMs) * time.Millisecond,
-		Verbose:             cfg.Generator.Verbose,
-		EnableMetrics:       cfg.Metrics,
-		MetricsPort:         cfg.MetricsPort,
+	generatorConfig := &generator.GeneratorConfig{
+		GeneratorConfig: &cfg.Generator,
+		System:          cfg.System,
+		Duration:        time.Duration(cfg.DurationSeconds) * time.Second,
+		EnableMetrics:   cfg.Metrics,
+		MetricsPort:     cfg.MetricsPort,
+		GlobalVerbose:   cfg.Verbose,
+		GlobalDebug:     cfg.Debug,
 	}
 
 	// Output information about log type distribution
-	fmt.Println("Log type distribution:", generatorConfig.LogTypeDistribution)
+	fmt.Println("Log type distribution:", generatorConfig.Distribution)
 
 	// Enable metrics, if needed
 	if cfg.Metrics {
@@ -505,72 +364,153 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 	// Create database client
 	options := logdb.Options{
 		BatchSize:       generatorConfig.BulkSize,
-		Timeout:         cfg.Generator.Timeout(), // Request timeout from config
+		Timeout:         generatorConfig.Timeout(), // Request timeout from config
 		RetryCount:      generatorConfig.MaxRetries,
-		RetryDelay:      generatorConfig.RetryDelay,
-		Verbose:         generatorConfig.Verbose,
+		RetryDelay:      generatorConfig.RetryDelay(),
+		Verbose:         generatorConfig.IsVerbose(),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
-	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.URL, options)
+	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.GetURL(), options)
 	if err != nil {
 		log.Fatalf("Error creating database client: %v", err)
 	}
 
-	fmt.Printf("[Generator] Starting with RPS=%d, system=%s\n", cfg.Generator.RPS, cfg.System)
+	fmt.Printf("[Generator] Starting with RPS=%.2f, system=%s\n", generatorConfig.GetRPS(), cfg.System)
 
-	// Start generator
-	if err := generator.RunGenerator(generatorConfig, db); err != nil {
+	// Start optimized generator
+	if err := generator.RunGeneratorOptimized(generatorConfig, db); err != nil {
 		log.Fatalf("Error starting generator: %v", err)
 	}
 }
 
-// runGeneratorWithContextConfig starts the generator with context support for graceful shutdown
-func runGeneratorWithContextConfig(ctx context.Context, cfg *common.Config, stats *common.Stats) {
-	generatorConfig := generator.Config{
-		Mode:     "default",
-		BaseURL:  cfg.Generator.GetURL(cfg.System),
-		URL:      cfg.Generator.GetURL(cfg.System),
-		RPS:      cfg.Generator.RPS,
-		Duration: time.Duration(cfg.DurationSeconds) * time.Second,
-		BulkSize: cfg.Generator.BulkSize,
-		// WorkerCount removed - using CPU-based allocation
-		// ConnectionCount removed - using dynamic CPU-based allocation in logdb
-		LogTypeDistribution: cfg.Generator.Distribution,
-		MaxRetries:          cfg.Generator.MaxRetries,
-		RetryDelay:          time.Duration(cfg.Generator.RetryDelayMs) * time.Millisecond,
-		Verbose:             cfg.Generator.Verbose,
-		EnableMetrics:       cfg.Metrics,
-		MetricsPort:         cfg.MetricsPort,
+// runGeneratorWithContextConfigAndRPSAndStatsLogger starts the generator with context, specific RPS and StatsLogger support
+func runGeneratorWithContextConfigAndRPSAndStatsLogger(ctx context.Context, cfg *common.Config, stats *common.Stats, rps float64,
+	statsLogger *common.StatsLogger, step, totalSteps int) {
+	generatorConfig := &generator.GeneratorConfig{
+		GeneratorConfig: &cfg.Generator,
+		System:          cfg.System,
+		Duration:        time.Duration(cfg.DurationSeconds) * time.Second,
+		EnableMetrics:   cfg.Metrics,
+		MetricsPort:     cfg.MetricsPort,
+		GlobalVerbose:   cfg.Verbose,
+		GlobalDebug:     cfg.Debug,
+		RuntimeRPS:      rps, // Set specific RPS for this step
 	}
 
 	// Create database client
 	options := logdb.Options{
 		BatchSize:       generatorConfig.BulkSize,
-		Timeout:         cfg.Generator.Timeout(), // Request timeout from config
+		Timeout:         generatorConfig.Timeout(), // Request timeout from config
 		RetryCount:      generatorConfig.MaxRetries,
-		RetryDelay:      generatorConfig.RetryDelay,
-		Verbose:         generatorConfig.Verbose,
+		RetryDelay:      generatorConfig.RetryDelay(),
+		Verbose:         generatorConfig.IsVerbose(),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
-	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.URL, options)
+	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.GetURL(), options)
 	if err != nil {
 		log.Printf("Error creating database client: %v", err)
 		return
 	}
 
-	fmt.Printf("[Generator] Starting with RPS=%d, system=%s\n", cfg.Generator.RPS, cfg.System)
+	fmt.Printf("[Generator] Starting with RPS=%.2f, system=%s\n", generatorConfig.GetRPS(), cfg.System)
 
-	// Start generator with context support
-	// TODO: Implement RunGeneratorWithContext in generator package for proper context cancellation
-	// For now, using regular RunGenerator - context cancellation will not be immediate
+	// Start generator with context and StatsLogger support
 	select {
 	case <-ctx.Done():
 		log.Printf("Generator stopped by context cancellation before start")
 		return
 	default:
-		if err := generator.RunGenerator(generatorConfig, db); err != nil {
+		// Use optimized RunGeneratorWithContextAndStatsLogger for proper context cancellation and logging
+		if err := generator.RunGeneratorOptimizedWithContextAndStatsLogger(ctx, generatorConfig, db, statsLogger, step, totalSteps); err != nil {
+			log.Printf("Error in generator: %v", err)
+		}
+	}
+}
+
+// runGeneratorWithContextConfigAndRPS starts the generator with context support and specific RPS for maxPerf mode
+func runGeneratorWithContextConfigAndRPS(ctx context.Context, cfg *common.Config, stats *common.Stats, rps float64) {
+	generatorConfig := &generator.GeneratorConfig{
+		GeneratorConfig: &cfg.Generator,
+		System:          cfg.System,
+		Duration:        time.Duration(cfg.DurationSeconds) * time.Second,
+		EnableMetrics:   cfg.Metrics,
+		MetricsPort:     cfg.MetricsPort,
+		GlobalVerbose:   cfg.Verbose,
+		GlobalDebug:     cfg.Debug,
+		RuntimeRPS:      rps, // Set specific RPS for this step
+	}
+
+	// Create database client
+	options := logdb.Options{
+		BatchSize:       generatorConfig.BulkSize,
+		Timeout:         generatorConfig.Timeout(), // Request timeout from config
+		RetryCount:      generatorConfig.MaxRetries,
+		RetryDelay:      generatorConfig.RetryDelay(),
+		Verbose:         generatorConfig.IsVerbose(),
+		ConnectionCount: cfg.Generator.GetConnectionCount(),
+	}
+
+	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.GetURL(), options)
+	if err != nil {
+		log.Printf("Error creating database client: %v", err)
+		return
+	}
+
+	fmt.Printf("[Generator] Starting with RPS=%.2f, system=%s\n", generatorConfig.GetRPS(), cfg.System)
+
+	// Start generator with context support
+	select {
+	case <-ctx.Done():
+		log.Printf("Generator stopped by context cancellation before start")
+		return
+	default:
+		// Use optimized RunGeneratorWithContext for proper context cancellation
+		if err := generator.RunGeneratorOptimizedWithContext(ctx, generatorConfig, db); err != nil {
+			log.Printf("Error in generator: %v", err)
+		}
+	}
+}
+
+// runGeneratorWithContextConfig starts the generator with context support for graceful shutdown
+func runGeneratorWithContextConfig(ctx context.Context, cfg *common.Config, stats *common.Stats) {
+	generatorConfig := &generator.GeneratorConfig{
+		GeneratorConfig: &cfg.Generator,
+		System:          cfg.System,
+		Duration:        time.Duration(cfg.DurationSeconds) * time.Second,
+		EnableMetrics:   cfg.Metrics,
+		MetricsPort:     cfg.MetricsPort,
+		GlobalVerbose:   cfg.Verbose,
+		GlobalDebug:     cfg.Debug,
+	}
+
+	// Create database client
+	options := logdb.Options{
+		BatchSize:       generatorConfig.BulkSize,
+		Timeout:         generatorConfig.Timeout(), // Request timeout from config
+		RetryCount:      generatorConfig.MaxRetries,
+		RetryDelay:      generatorConfig.RetryDelay(),
+		Verbose:         generatorConfig.IsVerbose(),
+		ConnectionCount: cfg.Generator.GetConnectionCount(),
+	}
+
+	db, err := logdb.CreateLogDB(cfg.System, generatorConfig.GetURL(), options)
+	if err != nil {
+		log.Printf("Error creating database client: %v", err)
+		return
+	}
+
+	fmt.Printf("[Generator] Starting with RPS=%.2f, system=%s\n", generatorConfig.GetRPS(), cfg.System)
+
+	// Start generator with context support
+	select {
+	case <-ctx.Done():
+		log.Printf("Generator stopped by context cancellation before start")
+		return
+	default:
+		// Use optimized RunGeneratorWithContext for proper context cancellation
+		if err := generator.RunGeneratorOptimizedWithContext(ctx, generatorConfig, db); err != nil {
 			log.Printf("Error in generator: %v", err)
 		}
 	}
@@ -581,7 +521,11 @@ func runMaxPerfTest(cfg *common.Config, stats *common.Stats) error {
 	var loadTestConfig common.LoadTestConfig
 
 	// Get load test configuration based on mode
-	if cfg.Mode == modeGeneratorOnly || cfg.Mode == modeCombined {
+	if cfg.Mode == modeCombined {
+		// For combined mode, use only timing parameters from combined section
+		// baseRPS/percentages will be taken from individual generator/querier sections
+		loadTestConfig = cfg.Combined.GetLoadTestConfig("maxPerf")
+	} else if cfg.Mode == modeGeneratorOnly {
 		loadTestConfig = cfg.Generator.GetLoadTestConfig("maxPerf")
 	} else if cfg.Mode == modeQuerierOnly {
 		loadTestConfig = cfg.Querier.GetLoadTestConfig("maxPerf")
@@ -590,35 +534,69 @@ func runMaxPerfTest(cfg *common.Config, stats *common.Stats) error {
 	}
 
 	// Initialize load test logger
-	logger, err := common.NewLoadTestLogger()
+	logger, err := common.NewLoadTestLogger(cfg.Mode, "maxPerf")
 	if err != nil {
 		return fmt.Errorf("failed to initialize load test logger: %v", err)
 	}
 	defer logger.Close()
 
+	// Initialize statistics loggers for each module
+	var generatorStatsLogger, querierStatsLogger *common.StatsLogger
+
+	if cfg.Mode == modeGeneratorOnly || cfg.Mode == modeCombined {
+		generatorStatsLogger, err = common.NewStatsLogger(cfg.Mode, "maxPerf", "generator")
+		if err != nil {
+			return fmt.Errorf("failed to initialize generator stats logger: %v", err)
+		}
+		defer generatorStatsLogger.Close()
+	}
+
+	if cfg.Mode == modeQuerierOnly || cfg.Mode == modeCombined {
+		querierStatsLogger, err = common.NewStatsLogger(cfg.Mode, "maxPerf", "querier")
+		if err != nil {
+			return fmt.Errorf("failed to initialize querier stats logger: %v", err)
+		}
+		defer querierStatsLogger.Close()
+	}
+
 	// Log test start
 	logger.LogTestStart("maxPerf")
-	fmt.Printf("Starting maxPerf test: %d steps, base RPS=%d, start=%d%%, increment=%d%%\n",
-		loadTestConfig.Steps, loadTestConfig.BaseRPS, loadTestConfig.StartPercent, loadTestConfig.IncrementPercent)
 
 	// Execute each step
 	for step := 1; step <= loadTestConfig.Steps; step++ {
-		// Calculate RPS for this step
-		currentPercent := float64(loadTestConfig.StartPercent + (step-1)*loadTestConfig.IncrementPercent)
-		currentRPS := int(float64(loadTestConfig.BaseRPS) * currentPercent / 100.0)
+		// Calculate RPS for this step with floating point precision
+		var generatorRPS, querierRPS float64
+		if cfg.Mode == modeCombined {
+			// For combined mode, calculate RPS separately for each component
+			generatorConfig := cfg.Generator.GetLoadTestConfig("maxPerf")
+			querierConfig := cfg.Querier.GetLoadTestConfig("maxPerf")
 
-		fmt.Printf("Step %d/%d: %.1f%% of base RPS = %d RPS\n", step, loadTestConfig.Steps, currentPercent, currentRPS)
+			generatorPercent := generatorConfig.StartPercent + float64(step-1)*generatorConfig.IncrementPercent
+			querierPercent := querierConfig.StartPercent + float64(step-1)*querierConfig.IncrementPercent
 
-		// Log step start
-		logger.LogStepStart(step, float64(currentRPS))
+			generatorRPS = generatorConfig.BaseRPS * generatorPercent / 100.0
+			querierRPS = querierConfig.BaseRPS * querierPercent / 100.0
 
-		// Update configuration with current RPS
-		if cfg.Mode == modeGeneratorOnly || cfg.Mode == modeCombined {
-			cfg.Generator.RPS = currentRPS
+			fmt.Printf("Step %d/%d (combined): Generator=%.1f%% (%.2f RPS), Querier=%.1f%% (%.2f RPS)\n",
+				step, loadTestConfig.Steps, generatorPercent, generatorRPS, querierPercent, querierRPS)
+		} else {
+			// For single mode, use the same RPS calculation
+			currentPercent := loadTestConfig.StartPercent + float64(step-1)*loadTestConfig.IncrementPercent
+			currentRPS := loadTestConfig.BaseRPS * currentPercent / 100.0
+			generatorRPS = currentRPS
+			querierRPS = currentRPS
+
+			fmt.Printf("Step %d/%d: %.1f%% of base RPS = %.2f RPS\n", step, loadTestConfig.Steps, currentPercent, currentRPS)
 		}
-		if cfg.Mode == modeQuerierOnly || cfg.Mode == modeCombined {
-			cfg.Querier.RPS = currentRPS
+
+		// Log step start with appropriate method based on mode
+		if cfg.Mode == modeCombined {
+			logger.LogCombinedStepStart(step, generatorRPS, querierRPS)
+		} else {
+			logger.LogStepStart(step, generatorRPS)
 		}
+
+		// RPS will be passed directly to the generator function
 
 		// Set step duration for the current step
 		cfg.DurationSeconds = loadTestConfig.Impact + loadTestConfig.StepDuration
@@ -633,28 +611,34 @@ func runMaxPerfTest(cfg *common.Config, stats *common.Stats) error {
 		// Start appropriate load generators based on mode
 		if cfg.Mode == modeGeneratorOnly || cfg.Mode == modeCombined {
 			wg.Add(1)
-			go func() {
+			go func(rps float64) {
 				defer wg.Done()
-				runGeneratorWithContextConfig(ctx, cfg, stats)
-			}()
+				runGeneratorWithContextConfigAndRPSAndStatsLogger(ctx, cfg, stats, rps, generatorStatsLogger, step, loadTestConfig.Steps)
+			}(generatorRPS)
 		}
 
 		if cfg.Mode == modeQuerierOnly || cfg.Mode == modeCombined {
 			wg.Add(1)
-			go func() {
+			go func(ctx context.Context, rps float64) {
 				defer wg.Done()
-				// Start querier in background for this step
-				if err := runQuerierWithConfig(cfg, stats); err != nil {
+				// Create fresh stats for this step to avoid accumulation between steps
+				stepStats := &common.Stats{}
+				// Start querier in background for this step with dynamic RPS, context and StatsLogger
+				if err := runQuerierWithConfigAndRPSAndContextAndStatsLogger(ctx, cfg, stepStats, rps, querierStatsLogger, step, loadTestConfig.Steps); err != nil {
 					log.Printf("Querier error in step %d: %v", step, err)
 				}
-			}()
+			}(ctx, querierRPS)
 		}
 
 		// Wait for impact period to end
 		time.Sleep(time.Duration(loadTestConfig.Impact) * time.Second)
 
 		// Log end of impact period
-		logger.LogImpactEnd(step)
+		if cfg.Mode == modeCombined {
+			logger.LogCombinedImpactEnd(step)
+		} else {
+			logger.LogImpactEnd(step)
+		}
 		fmt.Printf("Impact period ended, starting stable load period (%d seconds)...\n", loadTestConfig.StepDuration)
 
 		// Wait for stable load period to complete
@@ -665,16 +649,43 @@ func runMaxPerfTest(cfg *common.Config, stats *common.Stats) error {
 		wg.Wait()
 
 		// Log step end
-		logger.LogStepEnd(step)
+		if cfg.Mode == modeCombined {
+			logger.LogCombinedStepEnd(step)
+		} else {
+			logger.LogStepEnd(step)
+		}
+
+		// Statistics are now automatically logged by StatsLogger integration
+		// in RunGeneratorOptimizedWithContextAndStatsLogger and RunQuerierWithContext functions
+
 		fmt.Printf("Step %d completed\n", step)
 	}
 
 	// Log test completion
 	logger.LogTestEnd()
 
+	// Stop metrics server gracefully
+	common.StopMetricsServer()
+
 	// Generate YAML report
-	if err := logger.GenerateYAMLReport("maxPerf", loadTestConfig); err != nil {
-		log.Printf("Warning: failed to generate YAML report: %v", err)
+	if cfg.Mode == modeCombined {
+		// For combined mode, use separate configs
+		timingConfig := cfg.Combined.GetLoadTestConfig("maxPerf")
+		generatorConfig := cfg.Generator.GetLoadTestConfig("maxPerf")
+		querierConfig := cfg.Querier.GetLoadTestConfig("maxPerf")
+		bulkSize := cfg.Generator.BulkSize
+
+		if err := logger.GenerateYAMLReportCombinedWithBulkSize("maxPerf", timingConfig, generatorConfig, querierConfig, bulkSize); err != nil {
+			log.Printf("Warning: failed to generate combined YAML report: %v", err)
+		}
+	} else {
+		var bulkSize int
+		if cfg.Mode == modeGeneratorOnly {
+			bulkSize = cfg.Generator.BulkSize
+		}
+		if err := logger.GenerateYAMLReportWithBulkSize("maxPerf", loadTestConfig, bulkSize); err != nil {
+			log.Printf("Warning: failed to generate YAML report: %v", err)
+		}
 	}
 
 	fmt.Printf("MaxPerf test completed successfully\n")
@@ -686,7 +697,11 @@ func runStabilityTest(cfg *common.Config, stats *common.Stats) error {
 	var loadTestConfig common.LoadTestConfig
 
 	// Get load test configuration based on mode
-	if cfg.Mode == modeGeneratorOnly || cfg.Mode == modeCombined {
+	if cfg.Mode == modeCombined {
+		// For combined mode, use only timing parameters from combined section
+		// baseRPS/stepPercent will be taken from individual generator/querier sections
+		loadTestConfig = cfg.Combined.GetLoadTestConfig("stability")
+	} else if cfg.Mode == modeGeneratorOnly {
 		loadTestConfig = cfg.Generator.GetLoadTestConfig("stability")
 	} else if cfg.Mode == modeQuerierOnly {
 		loadTestConfig = cfg.Querier.GetLoadTestConfig("stability")
@@ -695,30 +710,63 @@ func runStabilityTest(cfg *common.Config, stats *common.Stats) error {
 	}
 
 	// Initialize load test logger
-	logger, err := common.NewLoadTestLogger()
+	logger, err := common.NewLoadTestLogger(cfg.Mode, "stability")
 	if err != nil {
 		return fmt.Errorf("failed to initialize load test logger: %v", err)
 	}
 	defer logger.Close()
 
-	// Calculate RPS for stability test
-	currentRPS := int(float64(loadTestConfig.BaseRPS) * float64(loadTestConfig.StepPercent) / 100.0)
+	// Initialize StatsLoggers for generator and querier
+	var generatorStatsLogger, querierStatsLogger *common.StatsLogger
+	if cfg.Mode == modeGeneratorOnly || cfg.Mode == modeCombined {
+		generatorStatsLogger, err = common.NewStatsLogger(cfg.Mode, "stability", "generator")
+		if err != nil {
+			return fmt.Errorf("failed to initialize generator stats logger: %v", err)
+		}
+		defer generatorStatsLogger.Close()
+	}
 
-	// Log test start
-	logger.LogTestStart("stability")
-	fmt.Printf("Starting stability test: %d%% of base RPS = %d RPS, duration=%d+%d seconds\n",
-		loadTestConfig.StepPercent, currentRPS, loadTestConfig.Impact, loadTestConfig.StepDuration)
+	if cfg.Mode == modeQuerierOnly || cfg.Mode == modeCombined {
+		querierStatsLogger, err = common.NewStatsLogger(cfg.Mode, "stability", "querier")
+		if err != nil {
+			return fmt.Errorf("failed to initialize querier stats logger: %v", err)
+		}
+		defer querierStatsLogger.Close()
+	}
+
+	// Calculate RPS for stability test (different RPS for generator and querier in combined mode)
+	var generatorRPS, querierRPS float64
+	if cfg.Mode == modeCombined {
+		// For combined mode, calculate RPS separately for each component
+		generatorConfig := cfg.Generator.GetLoadTestConfig("stability")
+		querierConfig := cfg.Querier.GetLoadTestConfig("stability")
+		generatorRPS = generatorConfig.BaseRPS * generatorConfig.StepPercent / 100.0
+		querierRPS = querierConfig.BaseRPS * querierConfig.StepPercent / 100.0
+
+		// Log test start with both RPS values
+		logger.LogTestStart("stability")
+		fmt.Printf("Starting stability test (combined): Generator=%.2f RPS, Querier=%.2f RPS, duration=%d+%d seconds\n",
+			generatorRPS, querierRPS, loadTestConfig.Impact, loadTestConfig.StepDuration)
+	} else {
+		// For single mode, use the same RPS
+		currentRPS := loadTestConfig.BaseRPS * loadTestConfig.StepPercent / 100.0
+		generatorRPS = currentRPS
+		querierRPS = currentRPS
+
+		// Log test start
+		logger.LogTestStart("stability")
+		fmt.Printf("Starting stability test: %.1f%% of base RPS = %.2f RPS, duration=%d+%d seconds\n",
+			loadTestConfig.StepPercent, currentRPS, loadTestConfig.Impact, loadTestConfig.StepDuration)
+	}
 
 	// Log step start (stability test has only one "step")
-	logger.LogStepStart(1, float64(currentRPS))
+	if cfg.Mode == modeCombined {
+		logger.LogCombinedStepStart(1, generatorRPS, querierRPS)
+	} else {
+		logger.LogStepStart(1, generatorRPS)
+	}
 
-	// Update configuration with calculated RPS
-	if cfg.Mode == modeGeneratorOnly || cfg.Mode == modeCombined {
-		cfg.Generator.RPS = currentRPS
-	}
-	if cfg.Mode == modeQuerierOnly || cfg.Mode == modeCombined {
-		cfg.Querier.RPS = currentRPS
-	}
+	// RPS will be passed directly to the generator function
 
 	// Set total duration
 	cfg.DurationSeconds = loadTestConfig.Impact + loadTestConfig.StepDuration
@@ -733,45 +781,71 @@ func runStabilityTest(cfg *common.Config, stats *common.Stats) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runGeneratorWithContextConfig(ctx, cfg, stats)
+			// Use StatsLogger version for stability test (step 1, totalSteps 1)
+			runGeneratorWithContextConfigAndRPSAndStatsLogger(ctx, cfg, stats, generatorRPS, generatorStatsLogger, 1, 1)
 		}()
 	}
 
 	if cfg.Mode == modeQuerierOnly || cfg.Mode == modeCombined {
 		wg.Add(1)
-		go func() {
+		go func(ctx context.Context) {
 			defer wg.Done()
-			if err := runQuerierWithConfig(cfg, stats); err != nil {
+			// Use StatsLogger version for stability test (step 1, totalSteps 1)
+			if err := runQuerierWithConfigAndRPSAndContextAndStatsLogger(ctx, cfg, stats, querierRPS, querierStatsLogger, 1, 1); err != nil {
 				log.Printf("Querier error in stability test: %v", err)
 			}
-		}()
+		}(ctx)
 	}
 
-	// Wait for impact period to end
+	// Let generators run for the full configured duration
+	// Track timing phases for proper YAML reporting
 	fmt.Printf("Starting impact period (%d seconds)...\n", loadTestConfig.Impact)
+	fmt.Printf("Then stable load period (%d seconds)...\n", loadTestConfig.StepDuration)
+	fmt.Printf("Total duration: %d seconds (generators will manage their own timing)\n",
+		loadTestConfig.Impact+loadTestConfig.StepDuration)
+
+	// Sleep for impact period duration, then log the transition to stability period
 	time.Sleep(time.Duration(loadTestConfig.Impact) * time.Second)
+	if cfg.Mode == modeCombined {
+		logger.LogCombinedImpactEnd(1)
+	} else {
+		logger.LogImpactEnd(1)
+	}
 
-	// Log end of impact period
-	logger.LogImpactEnd(1)
-	fmt.Printf("Impact period ended, starting stable load period (%d seconds)...\n", loadTestConfig.StepDuration)
-
-	// Wait for stable load period to complete
-	time.Sleep(time.Duration(loadTestConfig.StepDuration) * time.Second)
-
-	// Stop all load generators
-	cancel()
+	// Wait for generators to complete their full duration
+	// (generators have their own Duration configuration)
 	wg.Wait()
 
 	// Stop metrics server gracefully
 	common.StopMetricsServer()
 
 	// Log step and test end
-	logger.LogStepEnd(1)
+	if cfg.Mode == modeCombined {
+		logger.LogCombinedStepEnd(1)
+	} else {
+		logger.LogStepEnd(1)
+	}
 	logger.LogTestEnd()
 
 	// Generate YAML report
-	if err := logger.GenerateYAMLReport("stability", loadTestConfig); err != nil {
-		log.Printf("Warning: failed to generate YAML report: %v", err)
+	if cfg.Mode == modeCombined {
+		// For combined mode, use separate configs
+		timingConfig := cfg.Combined.GetLoadTestConfig("stability")
+		generatorConfig := cfg.Generator.GetLoadTestConfig("stability")
+		querierConfig := cfg.Querier.GetLoadTestConfig("stability")
+		bulkSize := cfg.Generator.BulkSize
+
+		if err := logger.GenerateYAMLReportCombinedWithBulkSize("stability", timingConfig, generatorConfig, querierConfig, bulkSize); err != nil {
+			log.Printf("Warning: failed to generate combined YAML report: %v", err)
+		}
+	} else {
+		var bulkSize int
+		if cfg.Mode == modeGeneratorOnly {
+			bulkSize = cfg.Generator.BulkSize
+		}
+		if err := logger.GenerateYAMLReportWithBulkSize("stability", loadTestConfig, bulkSize); err != nil {
+			log.Printf("Warning: failed to generate YAML report: %v", err)
+		}
 	}
 
 	fmt.Printf("Stability test completed successfully\n")
@@ -804,7 +878,7 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 		Timeout:         config.Querier.Timeout(), // Timeout from config
 		RetryCount:      config.Querier.MaxRetries,
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
-		Verbose:         config.Querier.Verbose,
+		Verbose:         config.Querier.IsVerbose(config.Verbose),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
@@ -815,11 +889,15 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 		return fmt.Errorf("error creating query executor: %v", err)
 	}
 
+	// Get load test config and calculate RPS
+	loadTestConfig := config.Querier.GetLoadTestConfig(config.LoadMode)
+	currentRPS := loadTestConfig.BaseRPS * loadTestConfig.StepPercent / 100.0
+
 	// Create configuration for query module
 	queryConfig := go_querier.QueryConfig{
 		Mode:            config.System,
 		BaseURL:         baseURL,
-		QPS:             config.Querier.RPS,
+		QPS:             currentRPS,
 		DurationSeconds: config.DurationSeconds,
 		// WorkerCount removed - using CPU-based allocation
 		QueryTypeDistribution: map[models.QueryType]int{
@@ -833,11 +911,204 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 		QueryTimeout: 10 * time.Second, // Default 10 seconds
 		MaxRetries:   config.Querier.MaxRetries,
 		RetryDelayMs: config.Querier.RetryDelayMs,
-		Verbose:      config.Querier.Verbose,
+		Verbose:      config.Querier.IsVerbose(config.Verbose),
 	}
 
-	log.Printf("[Queries] Starting with QPS=%d, system=%s\n", config.Querier.RPS, config.System)
+	log.Printf("[Queries] Starting with QPS=%.2f, system=%s\n", currentRPS, config.System)
 
 	// Start query module
 	return go_querier.RunQuerier(queryConfig, executor, stats)
+}
+
+// runQuerierWithConfigAndRPS starts the query client with specific RPS for maxPerf mode
+func runQuerierWithConfigAndRPS(config *common.Config, stats *common.Stats, rps float64) error {
+	log.Printf("Starting query client for system %s\n", config.System)
+
+	// Determine URL for selected system
+	var baseURL string
+	var systemForExecutor string
+	switch config.System {
+	case "victorialogs", "victoria":
+		baseURL = config.Querier.URLVictoria
+		systemForExecutor = "victoria"
+	case "elasticsearch", "es", "elk":
+		baseURL = config.Querier.URLES
+		systemForExecutor = "es"
+	case "loki":
+		baseURL = config.Querier.URLLoki
+		systemForExecutor = "loki"
+	default:
+		return fmt.Errorf("unknown logging system: %s", config.System)
+	}
+
+	// Create options for query executor
+	options := models.Options{
+		Timeout:         config.Querier.Timeout(), // Timeout from config
+		RetryCount:      config.Querier.MaxRetries,
+		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
+		Verbose:         config.Querier.IsVerbose(config.Verbose),
+		ConnectionCount: config.Querier.GetConnectionCount(),
+	}
+
+	// Create query executor for selected system with time configuration
+	log.Printf("Debug: Creating query executor with system=%s, baseURL=%s", systemForExecutor, baseURL)
+	executor, err := go_querier.CreateQueryExecutorWithTimeConfig(systemForExecutor, baseURL, options, 1, &config.Querier.Times)
+	if err != nil {
+		return fmt.Errorf("error creating query executor: %v", err)
+	}
+
+	// Create configuration for query module with specific RPS
+	queryConfig := go_querier.QueryConfig{
+		Mode:            config.System,
+		BaseURL:         baseURL,
+		QPS:             rps, // Use specific RPS passed as parameter
+		DurationSeconds: config.DurationSeconds,
+		// WorkerCount removed - using CPU-based allocation
+		QueryTypeDistribution: map[models.QueryType]int{
+			models.SimpleQuery:     config.Querier.Distribution["simple"],
+			models.ComplexQuery:    config.Querier.Distribution["complex"],
+			models.AnalyticalQuery: config.Querier.Distribution["analytical"],
+			models.TimeSeriesQuery: config.Querier.Distribution["timeseries"],
+			models.StatQuery:       config.Querier.Distribution["stat"],
+			models.TopKQuery:       config.Querier.Distribution["topk"],
+		},
+		QueryTimeout: 10 * time.Second, // Default 10 seconds
+		MaxRetries:   config.Querier.MaxRetries,
+		RetryDelayMs: config.Querier.RetryDelayMs,
+		Verbose:      config.Querier.IsVerbose(config.Verbose),
+	}
+
+	log.Printf("[Queries] Starting with QPS=%.2f, system=%s\n", rps, config.System)
+
+	// Start query module
+	return go_querier.RunQuerier(queryConfig, executor, stats)
+}
+
+// runQuerierWithConfigAndRPSAndContextAndStatsLogger starts the query client with context, specific RPS and StatsLogger support
+func runQuerierWithConfigAndRPSAndContextAndStatsLogger(ctx context.Context, config *common.Config, stats *common.Stats, rps float64,
+	statsLogger *common.StatsLogger, step, totalSteps int) error {
+	log.Printf("Starting query client for system %s\n", config.System)
+
+	// Determine URL for selected system
+	var baseURL string
+	var systemForExecutor string
+	switch config.System {
+	case "victorialogs", "victoria":
+		baseURL = config.Querier.URLVictoria
+		systemForExecutor = "victoria"
+	case "elasticsearch", "es", "elk":
+		baseURL = config.Querier.URLES
+		systemForExecutor = "es"
+	case "loki":
+		baseURL = config.Querier.URLLoki
+		systemForExecutor = "loki"
+	default:
+		return fmt.Errorf("unknown logging system: %s", config.System)
+	}
+
+	// Create options for query executor
+	options := models.Options{
+		Timeout:         config.Querier.Timeout(), // Timeout from config
+		RetryCount:      config.Querier.MaxRetries,
+		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
+		Verbose:         config.Querier.IsVerbose(config.Verbose),
+		ConnectionCount: config.Querier.GetConnectionCount(),
+	}
+
+	// Create query executor for selected system with time configuration
+	log.Printf("Debug: Creating query executor with system=%s, baseURL=%s", systemForExecutor, baseURL)
+	executor, err := go_querier.CreateQueryExecutorWithTimeConfig(systemForExecutor, baseURL, options, 1, &config.Querier.Times)
+	if err != nil {
+		return fmt.Errorf("error creating query executor: %v", err)
+	}
+
+	// Create configuration for query module with specific RPS
+	queryConfig := go_querier.QueryConfig{
+		Mode:            config.System,
+		BaseURL:         baseURL,
+		QPS:             rps, // Use specific RPS passed as parameter
+		DurationSeconds: config.DurationSeconds,
+		// WorkerCount removed - using CPU-based allocation
+		QueryTypeDistribution: map[models.QueryType]int{
+			models.SimpleQuery:     config.Querier.Distribution["simple"],
+			models.ComplexQuery:    config.Querier.Distribution["complex"],
+			models.AnalyticalQuery: config.Querier.Distribution["analytical"],
+			models.TimeSeriesQuery: config.Querier.Distribution["timeseries"],
+			models.StatQuery:       config.Querier.Distribution["stat"],
+			models.TopKQuery:       config.Querier.Distribution["topk"],
+		},
+		QueryTimeout: 10 * time.Second, // Default 10 seconds
+		MaxRetries:   config.Querier.MaxRetries,
+		RetryDelayMs: config.Querier.RetryDelayMs,
+		Verbose:      config.Querier.IsVerbose(config.Verbose),
+	}
+
+	log.Printf("[Queries] Starting with QPS=%.2f, system=%s\n", rps, config.System)
+
+	// Start query module with context and StatsLogger support
+	return go_querier.RunQuerierWithContext(ctx, queryConfig, executor, stats, statsLogger, step, totalSteps)
+}
+
+// runQuerierWithConfigAndRPSAndContext starts the query client with context support and specific RPS for maxPerf mode
+func runQuerierWithConfigAndRPSAndContext(ctx context.Context, config *common.Config, stats *common.Stats, rps float64) error {
+	log.Printf("Starting query client for system %s\n", config.System)
+
+	// Determine URL for selected system
+	var baseURL string
+	var systemForExecutor string
+	switch config.System {
+	case "victorialogs", "victoria":
+		baseURL = config.Querier.URLVictoria
+		systemForExecutor = "victoria"
+	case "elasticsearch", "es", "elk":
+		baseURL = config.Querier.URLES
+		systemForExecutor = "es"
+	case "loki":
+		baseURL = config.Querier.URLLoki
+		systemForExecutor = "loki"
+	default:
+		return fmt.Errorf("unknown logging system: %s", config.System)
+	}
+
+	// Create options for query executor
+	options := models.Options{
+		Timeout:         config.Querier.Timeout(), // Timeout from config
+		RetryCount:      config.Querier.MaxRetries,
+		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
+		Verbose:         config.Querier.IsVerbose(config.Verbose),
+		ConnectionCount: config.Querier.GetConnectionCount(),
+	}
+
+	// Create query executor for selected system with time configuration
+	log.Printf("Debug: Creating query executor with system=%s, baseURL=%s", systemForExecutor, baseURL)
+	executor, err := go_querier.CreateQueryExecutorWithTimeConfig(systemForExecutor, baseURL, options, 1, &config.Querier.Times)
+	if err != nil {
+		return fmt.Errorf("error creating query executor: %v", err)
+	}
+
+	// Create configuration for query module with specific RPS
+	queryConfig := go_querier.QueryConfig{
+		Mode:            config.System,
+		BaseURL:         baseURL,
+		QPS:             rps, // Use specific RPS passed as parameter
+		DurationSeconds: config.DurationSeconds,
+		// WorkerCount removed - using CPU-based allocation
+		QueryTypeDistribution: map[models.QueryType]int{
+			models.SimpleQuery:     config.Querier.Distribution["simple"],
+			models.ComplexQuery:    config.Querier.Distribution["complex"],
+			models.AnalyticalQuery: config.Querier.Distribution["analytical"],
+			models.TimeSeriesQuery: config.Querier.Distribution["timeseries"],
+			models.StatQuery:       config.Querier.Distribution["stat"],
+			models.TopKQuery:       config.Querier.Distribution["topk"],
+		},
+		QueryTimeout: 10 * time.Second, // Default 10 seconds
+		MaxRetries:   config.Querier.MaxRetries,
+		RetryDelayMs: config.Querier.RetryDelayMs,
+		Verbose:      config.Querier.IsVerbose(config.Verbose),
+	}
+
+	log.Printf("[Queries] Starting with QPS=%.2f, system=%s\n", rps, config.System)
+
+	// Start query module with context support - no StatsLogger for individual calls
+	return go_querier.RunQuerierWithContext(ctx, queryConfig, executor, stats, nil, 0, 0)
 }

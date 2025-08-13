@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,10 +34,6 @@ type LokiExecutor struct {
 
 	// Time range generator for realistic queries
 	timeRangeGenerator *queriercommon.TimeRangeGenerator
-
-	// Thread-safe random generator
-	rng      *rand.Rand
-	rngMutex sync.Mutex
 }
 
 // NewLokiExecutor creates a new Loki executor
@@ -63,7 +58,6 @@ func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
 		labelCache:         labelCache,
 		availableLabels:    availableLabels,
 		timeRangeGenerator: queriercommon.NewTimeRangeGenerator(),
-		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	return executor
@@ -89,17 +83,9 @@ func NewLokiExecutorWithTimeConfig(baseURL string, options models.Options, timeC
 		labelCache:         labelCache,
 		availableLabels:    availableLabels,
 		timeRangeGenerator: queriercommon.NewTimeRangeGeneratorWithConfig(timeConfig),
-		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	return executor
-}
-
-// safeRandIntn returns a thread-safe random number in range [0, n)
-func (e *LokiExecutor) safeRandIntn(n int) int {
-	e.rngMutex.Lock()
-	defer e.rngMutex.Unlock()
-	return e.rng.Intn(n)
 }
 
 // GetSystemName returns the system name
@@ -123,7 +109,7 @@ func (e *LokiExecutor) ExecuteQuery(ctx context.Context, queryType models.QueryT
 	// Execute the query against Loki
 	result, err := e.executeLokiQuery(queryInfo)
 	if err != nil {
-		return models.QueryResult{}, err
+		return models.QueryResult{QueryString: queryInfo["query"]}, err
 	}
 
 	// Populate time information in the result
@@ -146,7 +132,7 @@ func (e *LokiExecutor) GetLabelValues(ctx context.Context, label string) ([]stri
 	}
 
 	// For any label we don't have in our static data, return some generic values
-	genericValues := []string{"value1", "value2", "value3", "value-" + fmt.Sprint(e.safeRandIntn(100))}
+	genericValues := []string{"value1", "value2", "value3", "value-" + fmt.Sprint(logdata.RandomIntn(100))}
 
 	// Cache these values for future use
 	e.labelCacheLock.Lock()
@@ -169,10 +155,10 @@ func (e *LokiExecutor) GenerateRandomQueryWithTimeRange(queryType models.QueryTy
 	startTimeStr := queriercommon.FormatTimeForLoki(timeRange.Start)
 	endTimeStr := queriercommon.FormatTimeForLoki(timeRange.End)
 
-	// Set reasonable limits for the query - make limit random (max 500 to avoid series limits)
+	// Set reasonable limits for the query - use unified limits (max 500 to avoid series limits)
 	limits := []string{"10", "50", "100", "200", "300", "500"}
-	limit := limits[e.safeRandIntn(len(limits))] // Random limit for log queries
-	step := "10s"                                // Default step for metric queries
+	limit := limits[logdata.RandomIntn(len(limits))] // Random limit for log queries
+	step := "10s"                                    // Default step for metric queries
 
 	// Set shorter step for short time ranges
 	rangeDuration := timeRange.End.Sub(timeRange.Start)
@@ -226,467 +212,516 @@ func (e *LokiExecutor) GenerateRandomQueryWithTimeRange(queryType models.QueryTy
 	}
 }
 
-// generateSimpleQuery creates a simple query using available labels
+// generateSimpleQuery creates a simple query using unified strategy
 func (e *LokiExecutor) generateSimpleQuery(availableLabels []string) string {
-	// Choose a random label from available labels
-	var chosenLabel string
+	// Use Loki-compatible unified simple query generation
+	params := logdata.GenerateUnifiedSimpleQueryForLoki()
 
-	// Try to use commonly populated labels first
-	commonLabels := []string{"log_type", "host", "container_name", "service", "level", "environment"}
+	// Handle message search specially
+	if params.Field == "message" {
+		// Loki doesn't have labels for message content, so use text filter
+		// UNIFIED STRATEGY: Use catch-all positive selector for SimpleQuery consistency
+		baseSelector := "{log_type=~\".+\"}"
 
-	// Check if any of the common labels are available
-	for _, label := range commonLabels {
-		if contains(availableLabels, label) {
-			chosenLabel = label
-			break
+		// Convert value to string for text search
+		keyword := fmt.Sprintf("%v", params.Value)
+
+		// Fix regex escaping for Loki compatibility
+		if params.IsRegex || params.Operator == "=~" || params.Operator == "!~" {
+			keyword = logdata.FixLokiRegexEscaping(keyword)
 		}
-	}
 
-	// If no common label found, choose any random label
-	if chosenLabel == "" {
-		chosenLabel = availableLabels[e.safeRandIntn(len(availableLabels))]
-	}
-
-	// Use our static data to get values for this label
-	var selectedValues []string
-	// Choose 1-2 random values
-	count := e.safeRandIntn(2) + 1
-	selectedValues = logdata.GetMultipleRandomValuesForLabel(chosenLabel, count)
-
-	// Create the query string
-	var queryString string
-	if len(selectedValues) > 0 {
-		// Most frequently used pattern - exact label match (more likely to return results)
-		if e.safeRandIntn(10) < 8 {
-			if len(selectedValues) == 1 {
-				queryString = fmt.Sprintf("{%s=\"%s\"}", chosenLabel, selectedValues[0])
-			} else {
-				// Use regex for multiple values
-				queryString = fmt.Sprintf("{%s=~\"(%s)\"}", chosenLabel, strings.Join(selectedValues, "|"))
-			}
+		// UNIFIED STRATEGY: SimpleQuery must only use positive operators (= or =~)
+		// Convert all negative message operators to positive ones
+		if params.IsRegex || params.Operator == "=~" || params.Operator == "!~" {
+			return fmt.Sprintf("%s |~ \"%s\"", baseSelector, keyword)
 		} else {
-			// Less frequently used - exclusion pattern with positive selector to avoid Loki error
-			// Add a positive selector to make the query valid
-			queryString = fmt.Sprintf("{%s=~\".+\",%s!=\"%s\"}", chosenLabel, chosenLabel, selectedValues[0])
+			return fmt.Sprintf("%s |= \"%s\"", baseSelector, keyword)
 		}
+	}
 
-		// Add text filter for some queries to make the query more realistic
-		if rand.Intn(10) > 5 {
-			// Common keywords that users might search for
-			keywords := []string{
-				"error", "warning", "failed", "exception", "timeout",
-				"success", "completed", "started", "authenticated", "authorized",
-				"INFO", "WARN", "ERROR", "FATAL", "DEBUG",
-				"GET", "POST", "PUT", "DELETE", "PATCH",
-			}
-			keyword := keywords[rand.Intn(len(keywords))]
+	// Handle regular label searches with Loki compatibility
+	valueStr := fmt.Sprintf("%v", params.Value)
 
-			// Randomly choose between case-sensitive or insensitive search
-			if rand.Intn(2) == 0 {
-				queryString = fmt.Sprintf("%s |= \"%s\"", queryString, keyword)
-			} else {
-				queryString = fmt.Sprintf("%s |~ \"(?i)%s\"", queryString, keyword)
-			}
-		}
+	// Convert negative conditions to positive when possible for SimpleQuery (only one condition)
+	field, operator, value := logdata.ConvertNegativeToPositive(params.Field, params.Operator, params.Value)
+	valueStr = fmt.Sprintf("%v", value)
+
+	// Fix regex escaping for Loki compatibility
+	if params.IsRegex || operator == "=~" || operator == "!~" {
+		valueStr = logdata.FixLokiRegexEscaping(valueStr)
+	}
+
+	var queryString string
+	switch operator {
+	case "=":
+		queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
+	case "=~":
+		queryString = fmt.Sprintf("{%s=~\"%s\"}", field, valueStr)
+	default:
+		// UNIFIED STRATEGY: GenerateUnifiedSimpleQueryForLoki() already ensures only positive operators
+		// Fallback to exact match for any unexpected operators
+		queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
 	}
 
 	return queryString
 }
 
-// generateComplexQuery creates a complex query with multiple conditions
+// generateComplexQuery creates a complex query using unified strategy
 func (e *LokiExecutor) generateComplexQuery(availableLabels []string) string {
-	// Choose 2-4 random labels from available labels
-	labelCount := rand.Intn(3) + 2
-	chosenLabels := logdata.GetRandomLabels(labelCount)
+	// Use Loki-compatible unified complex query generation
+	params := logdata.GenerateUnifiedComplexQueryForLoki()
 
-	// For each chosen label, create a filter expression
-	labelExpressions := make([]string, 0, len(chosenLabels))
+	// Generate ComplexQuery with unified parameters
 
-	for _, label := range chosenLabels {
-		// Generate a filter expression for this label
-		// Use regex for 30% of label filters, exact match for 70%
-		useRegex := rand.Intn(10) < 3
-		valueCount := 1
-		if useRegex {
-			valueCount = rand.Intn(3) + 1 // 1-3 values for regex
+	// Build label expressions directly from Loki-compatible parameters
+	labelExpressions := make([]string, 0, len(params.Fields))
+
+	for i, field := range params.Fields {
+		// Skip message field for label selector (will be handled as text filter)
+		if field == "message" {
+			continue
 		}
 
-		expr := logdata.BuildLokiLabelFilterExpression(label, valueCount, useRegex)
+		value := params.Values[i]
+		operator := params.Operators[i]
+
+		// Convert value to string and fix regex escaping for Loki compatibility
+		valueStr := fmt.Sprintf("%v", value)
+		// Apply regex escaping for regex operators OR if value looks like a regex pattern
+		if operator == "=~" || operator == "!~" || strings.Contains(valueStr, `\.`) {
+			valueStr = logdata.FixLokiRegexEscaping(valueStr)
+		}
+
+		// Build label expression
+		var expr string
+		switch operator {
+		case "=":
+			expr = fmt.Sprintf(`%s="%s"`, field, valueStr)
+		case "!=":
+			expr = fmt.Sprintf(`%s!="%s"`, field, valueStr)
+		case "=~":
+			expr = fmt.Sprintf(`%s=~"%s"`, field, valueStr)
+		case "!~":
+			expr = fmt.Sprintf(`%s!~"%s"`, field, valueStr)
+		default:
+			// Fallback to exact match
+			expr = fmt.Sprintf(`%s="%s"`, field, valueStr)
+		}
+
 		labelExpressions = append(labelExpressions, expr)
 	}
 
-	// Join all label expressions
-	labelSelector := strings.Join(labelExpressions, ", ")
+	// Apply simplified Loki validation for ComplexQuery requirements
+	labelExpressions = e.validateComplexQueryForLoki(labelExpressions)
 
-	// Create the query string with the label selector
-	queryString := fmt.Sprintf("{%s}", labelSelector)
+	// Build final query string with validated expressions
 
-	// Add text filters (AND, OR, NOT conditions)
-	if rand.Intn(10) > 3 { // 70% chance to add a text filter
-		// Text filter keywords
-		keywords := []string{
-			"error", "warning", "failed", "exception", "timeout",
-			"success", "completed", "started", "authenticated", "authorized",
-		}
-
-		// Choose 1-2 keywords
-		keywordCount := rand.Intn(2) + 1
-		for i := 0; i < keywordCount; i++ {
-			keyword := keywords[rand.Intn(len(keywords))]
-
-			// Randomly choose filter type
-			filterType := rand.Intn(4)
-			switch filterType {
-			case 0:
-				// Simple include
-				queryString = fmt.Sprintf("%s |= \"%s\"", queryString, keyword)
-			case 1:
-				// Case insensitive include
-				queryString = fmt.Sprintf("%s |~ \"(?i)%s\"", queryString, keyword)
-			case 2:
-				// Simple exclude
-				queryString = fmt.Sprintf("%s != \"%s\"", queryString, keyword)
-			case 3:
-				// Case insensitive exclude
-				queryString = fmt.Sprintf("%s !~ \"(?i)%s\"", queryString, keyword)
-			}
+	// Build final query string - simplified for fair comparison (only AND logic)
+	var queryString string
+	// FAIRNESS: Only AND logic for fair comparison across all systems
+	// Loki doesn't support OR in label selectors, so we use only AND everywhere
+	if len(labelExpressions) > 0 {
+		labelSelector := strings.Join(labelExpressions, ", ")
+		queryString = fmt.Sprintf("{%s}", labelSelector)
+	} else {
+		// Generate fallback using unified approach
+		fallbackParams := logdata.GenerateUnifiedSimpleQueryForLoki()
+		field, operator, value := logdata.ConvertNegativeToPositive(fallbackParams.Field, fallbackParams.Operator, fallbackParams.Value)
+		valueStr := fmt.Sprintf("%v", value)
+		if operator == "=~" || strings.Contains(valueStr, `\.`) {
+			valueStr = logdata.FixLokiRegexEscaping(valueStr)
+			queryString = fmt.Sprintf("{%s=~\"%s\"}", field, valueStr)
+		} else {
+			queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
 		}
 	}
+
+	// Add message search component if present
+	if params.MessageSearch != nil {
+		keyword := fmt.Sprintf("%v", params.MessageSearch.Value)
+
+		// Fix regex escaping for Loki compatibility
+		if params.MessageSearch.IsRegex || params.MessageSearch.Operator == "=~" || params.MessageSearch.Operator == "!~" {
+			keyword = logdata.FixLokiRegexEscaping(keyword)
+		}
+
+		// Use appropriate text filter operator
+		if params.MessageSearch.IsRegex || params.MessageSearch.Operator == "=~" {
+			queryString = fmt.Sprintf("%s |~ \"%s\"", queryString, keyword)
+		} else if params.MessageSearch.Operator == "!~" || params.MessageSearch.Operator == "!=" {
+			queryString = fmt.Sprintf("%s !~ \"%s\"", queryString, keyword)
+		} else {
+			queryString = fmt.Sprintf("%s |= \"%s\"", queryString, keyword)
+		}
+	}
+
+	// FAIRNESS: No mixed logic for fair comparison - only AND logic
 
 	return queryString
 }
 
 // generateAnalyticalQuery creates an analytical query
 func (e *LokiExecutor) generateAnalyticalQuery() string {
-	// Fields that we can unwrap from logs (only numeric fields)
-	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "status_code", "response_time", "cpu", "memory"}
+	// Use unified analytical query generation for maximum fairness
+	params := logdata.GenerateUnifiedAnalyticalQuery()
 
-	// Define aggregation functions including those requiring unwrap
-	aggregationFuncs := []string{
-		"sum", "min", "max", "avg", "stddev", "stdvar",
-		"sum_over_time", "min_over_time", "max_over_time",
-		"avg_over_time", "stddev_over_time", "stdvar_over_time",
-		"quantile_over_time", "first_over_time", "last_over_time",
-		"absent_over_time",
-	}
-
-	// Choose a time window
-	windows := []string{"5m", "10m", "30m", "1h", "2h"}
-	timeWindow := windows[rand.Intn(len(windows))]
-
-	// Get a random label and its possible values
-	label := logdata.GetRandomLabel()
-	labelValues := logdata.GetLabelValuesMap()[label]
+	// Build selector using unified parameters with proper Loki regex escaping
 	var selector string
+	filterValueStr := fmt.Sprintf("%v", params.FilterValue)
 
-	// 70% chance to use specific values instead of wildcard
-	if len(labelValues) > 0 && rand.Intn(10) < 7 {
-		// Use specific values
-		numValues := rand.Intn(3) + 1 // 1 to 3 values
-		if numValues > len(labelValues) {
-			numValues = len(labelValues)
-		}
-
-		selectedValues := make([]string, numValues)
-		for i := 0; i < numValues; i++ {
-			selectedValues[i] = labelValues[rand.Intn(len(labelValues))]
-		}
-
-		if len(selectedValues) == 1 {
-			selector = fmt.Sprintf(`{%s="%s"}`, label, selectedValues[0])
-		} else {
-			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(selectedValues, "|"))
-		}
+	// Apply Loki regex escaping if value contains regex patterns
+	if strings.Contains(filterValueStr, `\.`) || strings.Contains(filterValueStr, `[`) || strings.Contains(filterValueStr, `*`) {
+		filterValueStr = logdata.FixLokiRegexEscaping(filterValueStr)
+		// Use regex operator for escaped patterns
+		selector = fmt.Sprintf(`{%s=~"%s"}`, params.FilterField, filterValueStr)
 	} else {
-		// Use specific values instead of wide regex to avoid hitting series limit
-		// Select 1-3 specific values to make query more targeted
-		specificValues := logdata.GetMultipleRandomValuesForLabel(label, 1+rand.Intn(3))
-		if len(specificValues) == 1 {
-			selector = fmt.Sprintf(`{%s="%s"}`, label, specificValues[0])
-		} else {
-			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(specificValues, "|"))
-		}
+		// Use exact match for non-regex values
+		selector = fmt.Sprintf(`{%s="%s"}`, params.FilterField, filterValueStr)
 	}
+
+	// Choose time window from UniversalTimeWindows for fair comparison with other systems
+	timeWindow := logdata.UniversalTimeWindows[logdata.RandomIntn(len(logdata.UniversalTimeWindows))]
 
 	var expression string
 
-	// Random chance to use unwrap pattern for more complex queries
-	if rand.Intn(10) < 7 { // 70% chance to use unwrap
-		// Select a random field to unwrap
-		unwrapField := unwrapFields[rand.Intn(len(unwrapFields))]
-
-		// Select an aggregation function that works with unwrap
-		aggFunc := aggregationFuncs[rand.Intn(len(aggregationFuncs))]
-
-		// Create a query with unwrap - use proper LogQL syntax
-		if strings.Contains(aggFunc, "_over_time") {
-			// For _over_time functions, use proper LogQL unwrap syntax
-			if aggFunc == "quantile_over_time" {
-				// quantile_over_time requires a quantile parameter
-				quantile := queriercommon.GetRandomQuantile()
-				expression = fmt.Sprintf("%s(%s, (%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s])",
-					aggFunc,
-					quantile,
-					selector,
-					unwrapField,
-					timeWindow,
-				)
-			} else {
-				expression = fmt.Sprintf("%s((%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s])",
-					aggFunc,
-					selector,
-					unwrapField,
-					timeWindow,
-				)
-			}
-		} else {
-			// For other aggregations, use simpler non-unwrap queries to avoid syntax errors
-			simpleFuncs := []string{"count_over_time", "rate", "bytes_rate", "bytes_over_time"}
-			simpleFunc := simpleFuncs[rand.Intn(len(simpleFuncs))]
-			expression = fmt.Sprintf("%s(%s[%s])",
-				simpleFunc,
-				selector,
-				timeWindow,
-			)
-		}
-	} else {
-		// Simpler query without unwrap (for log counting style queries)
-		simpleFuncs := []string{"count_over_time", "rate", "bytes_rate", "bytes_over_time"}
-		simpleFunc := simpleFuncs[rand.Intn(len(simpleFuncs))]
-
-		expression = fmt.Sprintf("%s(%s[%s])",
-			simpleFunc,
+	switch params.AggregationType {
+	case "count":
+		// Count aggregation with topk for limiting results
+		expression = fmt.Sprintf("topk(%d, sum by(%s) (count_over_time(%s[%s])))",
+			params.Limit,
+			params.GroupByField,
 			selector,
 			timeWindow,
+		)
+
+	case "avg":
+		// Average aggregation with unwrap and topk for limiting results
+		expression = fmt.Sprintf("topk(%d, avg by(%s) (avg_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeWindow,
+		)
+
+	case "min":
+		// Minimum aggregation with unwrap and topk for limiting results
+		expression = fmt.Sprintf("topk(%d, min by(%s) (min_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeWindow,
+		)
+
+	case "max":
+		// Maximum aggregation with unwrap and topk for limiting results
+		expression = fmt.Sprintf("topk(%d, max by(%s) (max_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeWindow,
+		)
+
+	case "sum":
+		// Sum aggregation with unwrap and topk for limiting results
+		expression = fmt.Sprintf("topk(%d, sum by(%s) (sum_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeWindow,
+		)
+
+	case "quantile":
+		// Quantile aggregation with grouping for consistency with other systems
+		expression = fmt.Sprintf("topk(%d, quantile_over_time(%g, (%s | json | unwrap %s)[%s]) by (%s))",
+			params.Limit,
+			params.Quantile,
+			selector,
+			params.NumericField,
+			timeWindow,
+			params.GroupByField,
 		)
 	}
 
 	return expression
 }
 
-// generateTimeSeriesQuery builds a Loki rate/avg_over_time query grouped by log_type
+// generateTimeSeriesQuery builds a Loki time series query with range aggregations
+// FIXED: Now properly generates range queries for time series instead of instant queries
 func (e *LokiExecutor) generateTimeSeriesQuery() string {
-	// List of aggregation functions
-	aggFuncs := []string{"sum", "min", "max", "avg", "stddev", "stdvar", "count"}
+	// Use unified time series query generation for maximum fairness across all systems
+	params := logdata.GenerateUnifiedTimeSeriesQuery()
 
-	// List of time window functions
-	timeWindowFuncs := []string{"rate", "count_over_time", "bytes_rate", "bytes_over_time"}
-
-	// Choose aggregation and time window function randomly
-	aggFunc := aggFuncs[rand.Intn(len(aggFuncs))]
-	timeWindowFunc := timeWindowFuncs[rand.Intn(len(timeWindowFuncs))]
-
-	// List of possible time windows
-	timeWindows := []string{"5m", "10m", "30m", "1h"}
-	timeWindow := timeWindows[rand.Intn(len(timeWindows))]
-
-	// Choose a label to use for filtering
-	filterLabel := logdata.GetRandomLabel()
-	filterLabelValues := logdata.GetLabelValuesMap()[filterLabel]
-
-	// Get a second label for grouping (make sure it's different from filter label)
-	var groupByLabel string
-	for {
-		groupByLabel = logdata.GetRandomLabel()
-		if groupByLabel != filterLabel {
-			break
-		}
-	}
-
-	// Create the filter selector
+	// Create selector using unified filter parameters with proper regex escaping
+	filterValueStr := fmt.Sprintf("%v", params.FilterValue)
 	var selector string
 
-	// 70% chance to use specific values instead of wildcard
-	if len(filterLabelValues) > 0 && rand.Intn(10) < 7 {
-		// Use specific values
-		numValues := rand.Intn(3) + 1 // 1 to 3 values
-		if numValues > len(filterLabelValues) {
-			numValues = len(filterLabelValues)
-		}
-
-		selectedValues := make([]string, numValues)
-		for i := 0; i < numValues; i++ {
-			selectedValues[i] = filterLabelValues[rand.Intn(len(filterLabelValues))]
-		}
-
-		if len(selectedValues) == 1 {
-			selector = fmt.Sprintf(`{%s="%s"}`, filterLabel, selectedValues[0])
-		} else {
-			selector = fmt.Sprintf(`{%s=~"(%s)"}`, filterLabel, strings.Join(selectedValues, "|"))
-		}
+	// Apply Loki regex escaping if value contains regex patterns
+	if strings.Contains(filterValueStr, `\.`) || strings.Contains(filterValueStr, `[`) || strings.Contains(filterValueStr, `*`) {
+		filterValueStr = logdata.FixLokiRegexEscaping(filterValueStr)
+		// Use regex operator for escaped patterns
+		selector = fmt.Sprintf(`{%s=~"%s"}`, params.FilterField, filterValueStr)
 	} else {
-		// Use regex for all values
-		selector = fmt.Sprintf(`{%s=~".+"}`, filterLabel)
+		// Use exact match for non-regex values
+		selector = fmt.Sprintf(`{%s="%s"}`, params.FilterField, filterValueStr)
 	}
 
-	// Build the final query with aggregation by another label
-	query := fmt.Sprintf("%s by(%s) (%s(%s [%s]))",
-		aggFunc,
-		groupByLabel,
-		timeWindowFunc,
-		selector,
-		timeWindow,
-	)
+	// FIX: Use dynamic time interval for range queries instead of fixed interval
+	// This creates multiple time points similar to Elasticsearch date_histogram
+	timeInterval := params.TimeInterval // Use as step interval for range aggregation
+	var query string
+
+	// Build query based on unified aggregation type for maximum fairness
+	switch params.AggregationType {
+	case "count":
+		// Count aggregation using count_over_time with range query support
+		// FIX: Creates time series with multiple data points instead of single aggregated value
+		query = fmt.Sprintf("topk(%d, sum by(%s) (count_over_time(%s[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			timeInterval, // Now supports range queries for time series
+		)
+
+	case "avg":
+		// Average aggregation using avg_over_time with unwrap and range query support
+		// FIX: Creates time series with multiple data points instead of single aggregated value
+		query = fmt.Sprintf("topk(%d, avg by(%s) (avg_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeInterval, // Now supports range queries for time series
+		)
+
+	case "min":
+		// Minimum aggregation using min_over_time with unwrap and range query support
+		// FIX: Creates time series with multiple data points instead of single aggregated value
+		query = fmt.Sprintf("topk(%d, min by(%s) (min_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeInterval, // Now supports range queries for time series
+		)
+
+	case "max":
+		// Maximum aggregation using max_over_time with unwrap and range query support
+		// FIX: Creates time series with multiple data points instead of single aggregated value
+		query = fmt.Sprintf("topk(%d, max by(%s) (max_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeInterval, // Now supports range queries for time series
+		)
+
+	case "sum":
+		// Sum aggregation using sum_over_time with unwrap and range query support
+		// FIX: Creates time series with multiple data points instead of single aggregated value
+		query = fmt.Sprintf("topk(%d, sum by(%s) (sum_over_time((%s | json | unwrap %s)[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			params.NumericField,
+			timeInterval, // Now supports range queries for time series
+		)
+
+	case "quantile":
+		// Quantile aggregation using quantile_over_time with unwrap and range query support
+		// FIX: Creates time series with multiple data points instead of single aggregated value
+		query = fmt.Sprintf("topk(%d, quantile_over_time(%g, (%s | json | unwrap %s)[%s]) by (%s))",
+			params.Limit,
+			params.Quantile,
+			selector,
+			params.NumericField,
+			timeInterval, // Now supports range queries for time series
+			params.GroupByField,
+		)
+
+	default:
+		// Fallback to count with range query support
+		// FIX: Creates time series with multiple data points instead of single aggregated value
+		query = fmt.Sprintf("topk(%d, sum by(%s) (count_over_time(%s[%s])))",
+			params.Limit,
+			params.GroupByField,
+			selector,
+			timeInterval, // Now supports range queries for time series
+		)
+	}
 
 	return query
 }
 
 // generateStatQuery returns a single-value statistical aggregation (count over time)
 func (e *LokiExecutor) generateStatQuery(availableLabels []string) string {
-	// Define valid Loki aggregation functions
-	aggregationFuncs := []string{
-		"sum", "min", "max", "avg", "count", "stddev", "stdvar",
-	}
+	// Use unified stat query generation
+	params := logdata.GenerateUnifiedStatQuery()
 
-	// Fields that we can unwrap from logs (only numeric fields)
-	unwrapFields := []string{"bytes", "duration", "latency", "size", "count", "status_code", "response_time", "cpu", "memory"}
-
-	// Define valid time window functions compatible with Loki
-	timeWindowFuncs := []string{
-		"rate", "count_over_time", "bytes_over_time", "bytes_rate",
-		// Add _over_time functions that work with unwrap
-		"min_over_time", "max_over_time", "avg_over_time",
-		"sum_over_time", "stddev_over_time", "stdvar_over_time",
-	}
-
-	// Select random aggregation and time window function
-	aggregationFunc := aggregationFuncs[rand.Intn(len(aggregationFuncs))]
-	timeWindowFunc := timeWindowFuncs[rand.Intn(len(timeWindowFuncs))]
-
-	// Choose a time window
-	windows := []string{"5m", "10m", "30m", "1h", "2h"}
-	timeWindow := windows[rand.Intn(len(windows))]
-
-	// Get a random label and its possible values
-	label := logdata.GetRandomLabel()
-	labelValues := logdata.GetLabelValuesMap()[label]
+	// Create base selector using unified field and value with proper Loki regex escaping
 	var selector string
-
-	// 70% chance to use specific values instead of wildcard
-	if len(labelValues) > 0 && rand.Intn(10) < 7 {
-		// Use specific values
-		numValues := rand.Intn(3) + 1 // 1 to 3 values
-		if numValues > len(labelValues) {
-			numValues = len(labelValues)
-		}
-
-		selectedValues := make([]string, numValues)
-		for i := 0; i < numValues; i++ {
-			selectedValues[i] = labelValues[rand.Intn(len(labelValues))]
-		}
-
-		if len(selectedValues) == 1 {
-			selector = fmt.Sprintf(`{%s="%s"}`, label, selectedValues[0])
+	if params.FilterField == "message" {
+		// Handle message search specially for Loki
+		baseParams := logdata.GenerateUnifiedSimpleQueryForLoki()
+		field, operator, value := logdata.ConvertNegativeToPositive(baseParams.Field, baseParams.Operator, baseParams.Value)
+		valueStr := fmt.Sprintf("%v", value)
+		if operator == "=~" || strings.Contains(valueStr, `\.`) {
+			valueStr = logdata.FixLokiRegexEscaping(valueStr)
+			selector = fmt.Sprintf(`{%s=~"%s"}`, field, valueStr)
 		} else {
-			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(selectedValues, "|"))
+			selector = fmt.Sprintf(`{%s="%s"}`, field, valueStr)
 		}
+		messageValueStr := fmt.Sprintf("%v", params.FilterValue)
+		return fmt.Sprintf("%s |= \"%s\"", selector, messageValueStr)
 	} else {
-		// Use specific values instead of wide regex to avoid hitting series limit
-		// Select 1-3 specific values to make query more targeted
-		specificValues := logdata.GetMultipleRandomValuesForLabel(label, 1+rand.Intn(3))
-		if len(specificValues) == 1 {
-			selector = fmt.Sprintf(`{%s="%s"}`, label, specificValues[0])
+		// Handle regular label selectors with regex escaping
+		valueStr := fmt.Sprintf("%v", params.FilterValue)
+
+		// Apply Loki regex escaping if value contains regex patterns
+		if strings.Contains(valueStr, `\.`) || strings.Contains(valueStr, `[`) || strings.Contains(valueStr, `*`) {
+			valueStr = logdata.FixLokiRegexEscaping(valueStr)
+			// Use regex operator for escaped patterns
+			selector = fmt.Sprintf(`{%s=~"%s"}`, params.FilterField, valueStr)
 		} else {
-			selector = fmt.Sprintf(`{%s=~"(%s)"}`, label, strings.Join(specificValues, "|"))
+			// Use exact match for non-regex values
+			selector = fmt.Sprintf(`{%s="%s"}`, params.FilterField, valueStr)
 		}
 	}
 
+	// Choose time window from UniversalTimeWindows for fair comparison with other systems
+	timeWindow := logdata.UniversalTimeWindows[logdata.RandomIntn(len(logdata.UniversalTimeWindows))]
 	var expression string
 
-	// Check if we need to use unwrap pattern
-	if strings.Contains(timeWindowFunc, "_over_time") &&
-		timeWindowFunc != "count_over_time" &&
-		timeWindowFunc != "bytes_over_time" {
-		// These functions need unwrap
-		unwrapField := unwrapFields[rand.Intn(len(unwrapFields))]
+	switch params.StatType {
+	case "count":
+		// Simple count aggregation using count_over_time with unified time window
+		expression = fmt.Sprintf("sum(count_over_time(%s[%s]))", selector, timeWindow)
 
-		if timeWindowFunc == "quantile_over_time" {
-			// quantile_over_time requires a quantile parameter
-			quantile := queriercommon.GetRandomQuantile()
-			expression = fmt.Sprintf("%s(%s(%s, (%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s]))",
-				aggregationFunc,
-				timeWindowFunc,
-				quantile,
-				selector,
-				unwrapField,
-				timeWindow,
-			)
-		} else {
-			expression = fmt.Sprintf("%s(%s((%s | json | __error__!=\"SampleExtractionErr\" | unwrap %s)[%s]))",
-				aggregationFunc,
-				timeWindowFunc,
-				selector,
-				unwrapField,
-				timeWindow,
-			)
-		}
-	} else {
-		// Standard functions without unwrap
-		expression = fmt.Sprintf("%s(%s(%s [%s]))",
-			aggregationFunc,
-			timeWindowFunc,
-			selector,
-			timeWindow,
-		)
+	case "avg":
+		// Average with unwrap - Loki has avg_over_time with unified time window
+		expression = fmt.Sprintf("avg_over_time((%s | json | unwrap %s)[%s])",
+			selector, params.NumericField, timeWindow)
+
+	case "sum":
+		// Sum with unwrap - Loki has sum_over_time with unified time window
+		expression = fmt.Sprintf("sum_over_time((%s | json | unwrap %s)[%s])",
+			selector, params.NumericField, timeWindow)
+
+	case "min":
+		// Minimum with unwrap - Loki has min_over_time with unified time window
+		expression = fmt.Sprintf("min_over_time((%s | json | unwrap %s)[%s])",
+			selector, params.NumericField, timeWindow)
+
+	case "max":
+		// Maximum with unwrap - Loki has max_over_time with unified time window
+		expression = fmt.Sprintf("max_over_time((%s | json | unwrap %s)[%s])",
+			selector, params.NumericField, timeWindow)
+
+	case "quantile":
+		// Quantile with unwrap - Loki has quantile_over_time with unified time window
+		expression = fmt.Sprintf("quantile_over_time(%g, (%s | json | unwrap %s)[%s])",
+			params.Quantile, selector, params.NumericField, timeWindow)
 	}
 
 	return expression
 }
 
-// generateTopKQuery returns top-K label values within a time window
+// generateTopKQuery returns top-K label values within a time window using unified parameters
 func (e *LokiExecutor) generateTopKQuery(availableLabels []string) string {
-	// Define possible values for k (how many top results)
-	topKValues := []int{5, 10, 15, 20}
-	k := topKValues[rand.Intn(len(topKValues))]
+	// Generate unified TopK parameters for maximum fairness
+	params := logdata.GenerateUnifiedTopKQuery()
 
-	// Choose a time window
-	windows := []string{"5m", "10m", "30m", "1h"}
-	timeWindow := windows[rand.Intn(len(windows))]
-
-	// Get a random label for filtering and a random grouping label
-	filterLabel := logdata.GetRandomLabel()
-	groupByLabel := logdata.GetRandomLabel()
-
-	// Avoid using the same label for filter and groupBy
-	for filterLabel == groupByLabel {
-		groupByLabel = logdata.GetRandomLabel()
-	}
-
-	// Generate selector using the filter label with actual values instead of regex
-	labelValues := logdata.GetLabelValuesMap()[filterLabel]
+	// Build selector based on unified parameters
 	var selector string
-
-	if len(labelValues) > 0 && rand.Intn(2) == 0 {
-		// Use specific values for some queries (50% chance)
-		numValues := rand.Intn(3) + 1 // 1 to 3 values
-		if numValues > len(labelValues) {
-			numValues = len(labelValues)
-		}
-
-		selectedValues := make([]string, numValues)
-		for i := 0; i < numValues; i++ {
-			selectedValues[i] = labelValues[rand.Intn(len(labelValues))]
-		}
-
-		if len(selectedValues) == 1 {
-			selector = fmt.Sprintf(`{%s="%s"}`, filterLabel, selectedValues[0])
+	if params.HasBaseFilter {
+		// Create selector with base filtering using unified approach
+		if fieldType := logdata.FieldTypeMap[params.FilterField]; fieldType == logdata.StringField {
+			// String field - use exact match or regex
+			if str, ok := params.FilterValue.(string); ok {
+				if strings.Contains(str, "*") {
+					// Convert wildcard to regex and fix escaping for Loki
+					regexValue := strings.ReplaceAll(str, "*", ".*")
+					regexValue = logdata.FixLokiRegexEscaping(regexValue)
+					selector = fmt.Sprintf(`{%s=~"%s"}`, params.FilterField, regexValue)
+				} else {
+					// Check if it's a regex pattern that needs escaping for Loki
+					if strings.Contains(str, `\.`) {
+						fixedValue := logdata.FixLokiRegexEscaping(str)
+						selector = fmt.Sprintf(`{%s=~"%s"}`, params.FilterField, fixedValue)
+					} else {
+						// Exact match
+						selector = fmt.Sprintf(`{%s="%s"}`, params.FilterField, str)
+					}
+				}
+			} else {
+				// Non-string value - convert to string and check for regex patterns
+				valueStr := fmt.Sprintf("%v", params.FilterValue)
+				if strings.Contains(valueStr, `\.`) {
+					fixedValue := logdata.FixLokiRegexEscaping(valueStr)
+					selector = fmt.Sprintf(`{%s=~"%s"}`, params.FilterField, fixedValue)
+				} else {
+					selector = fmt.Sprintf(`{%s="%s"}`, params.FilterField, valueStr)
+				}
+			}
 		} else {
-			selector = fmt.Sprintf(`{%s=~"(%s)"}`, filterLabel, strings.Join(selectedValues, "|"))
+			// Non-string field - convert value to string and check for regex patterns
+			valueStr := fmt.Sprintf("%v", params.FilterValue)
+			if strings.Contains(valueStr, `\.`) {
+				fixedValue := logdata.FixLokiRegexEscaping(valueStr)
+				selector = fmt.Sprintf(`{%s=~"%s"}`, params.FilterField, fixedValue)
+			} else {
+				selector = fmt.Sprintf(`{%s="%s"}`, params.FilterField, valueStr)
+			}
 		}
 	} else {
-		// Use regex for all values
-		selector = fmt.Sprintf(`{%s=~".+"}`, filterLabel)
+		// No base filter - use catch-all selector
+		selector = fmt.Sprintf(`{%s=~".+"}`, params.GroupByField)
 	}
 
-	// Build the topk query according to Loki syntax
-	expression := fmt.Sprintf("topk(%d, count by(%s) (rate(%s[%s])))",
-		k,
-		groupByLabel,
+	// Build the topk query according to Loki syntax with unified parameters
+	// UNIFIED STRATEGY: Use count_over_time for direct count comparison with other systems
+	// This provides absolute counts rather than per-second rates for fairer TopK ranking
+	expression := fmt.Sprintf("topk(%d, count by(%s) (count_over_time(%s[%s])))",
+		params.K,
+		params.GroupByField,
 		selector,
-		timeWindow,
+		params.TimeWindow,
 	)
 
 	return expression
+}
+
+// validateComplexQueryForLoki ensures ComplexQuery meets Loki requirements with simplified validation
+func (e *LokiExecutor) validateComplexQueryForLoki(expressions []string) []string {
+	if len(expressions) == 0 {
+		// Generate fallback positive condition if no expressions
+		return []string{fmt.Sprintf(`%s=~".+"`, logdata.CommonLabels[0])}
+	}
+
+	hasPositive := false
+	validatedExpressions := make([]string, 0, len(expressions))
+
+	// Process each expression and check for positive matchers
+	for _, expr := range expressions {
+		// Check if this is a positive matcher (doesn't contain != or !~)
+		if !strings.Contains(expr, "!=") && !strings.Contains(expr, "!~") {
+			hasPositive = true
+		}
+		validatedExpressions = append(validatedExpressions, expr)
+	}
+
+	// Ensure minimum 2 conditions and 1 positive matcher
+	if len(validatedExpressions) < 2 || !hasPositive {
+		// Add guaranteed positive condition at the beginning
+		positiveExpr := fmt.Sprintf(`%s=~".+"`, logdata.CommonLabels[0])
+		validatedExpressions = append([]string{positiveExpr}, validatedExpressions...)
+	}
+
+	return validatedExpressions
 }
 
 // contains checks if a string is in a slice
@@ -736,13 +771,10 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 
 	// Check if the response status code is not 2xx
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Log detailed error information using structured logging
-		// common.LogLokiError(resp.StatusCode, queryInfo["query"], queryURL, string(bodyBytes))
-		fmt.Printf("Loki query error: status %d, query: %v, URL: %s, response: %s\n",
-			resp.StatusCode, queryInfo["query"], queryURL, string(bodyBytes))
-
-		// Return error with HTTP status code and response body
-		return models.QueryResult{}, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(bodyBytes))
+		// Return error with HTTP status code and response body, but include query string for logging
+		return models.QueryResult{
+			QueryString: queryInfo["query"],
+		}, fmt.Errorf("error response: code %d, body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// Parse the response

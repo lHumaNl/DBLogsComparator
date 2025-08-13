@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 )
 
 // LokiDB - implementation of LogDB for Loki
@@ -25,23 +27,11 @@ func NewLokiDB(baseURL string, options Options) (*LokiDB, error) {
 	db := &LokiDB{
 		BaseLogDB:   base,
 		Labels:      make(map[string]string),
-		LabelFields: []string{"log_type", "host", "container_name"},
+		LabelFields: logdata.GetAllSearchableFields(),
 	}
 
-	// Creating HTTP client with dynamic connection count
-	maxConns := options.ConnectionCount
-	if maxConns <= 0 {
-		maxConns = 100 // fallback default
-	}
-	db.httpClient = &http.Client{
-		Timeout: db.Timeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        maxConns,
-			MaxIdleConnsPerHost: maxConns,
-			MaxConnsPerHost:     maxConns,
-			IdleConnTimeout:     90 * time.Second,
-		},
-	}
+	// Use shared connection pool manager for generator
+	db.httpClient = GetGeneratorClient("loki", baseURL, options)
 
 	// Check and correct URL for Loki API
 	// In Loki 3.5.1+ API path: /loki/api/v1/push
@@ -89,8 +79,28 @@ func (db *LokiDB) extractLabels(log LogEntry) map[string]string {
 
 	// Add labels from log fields
 	for _, field := range db.LabelFields {
-		if value, ok := log[field].(string); ok {
-			labels[field] = value
+		if value, ok := log[field]; ok && value != nil {
+			// Convert different types to string for labels
+			switch v := value.(type) {
+			case string:
+				if v != "" {
+					labels[field] = v
+				}
+			case int:
+				labels[field] = fmt.Sprintf("%d", v)
+			case float64:
+				// Convert float to int if it's a whole number (like status codes)
+				if v == float64(int(v)) {
+					labels[field] = fmt.Sprintf("%d", int(v))
+				} else {
+					labels[field] = fmt.Sprintf("%.2f", v)
+				}
+			case bool:
+				labels[field] = fmt.Sprintf("%t", v)
+			default:
+				// For other types, use fmt.Sprintf
+				labels[field] = fmt.Sprintf("%v", v)
+			}
 		}
 	}
 
@@ -108,8 +118,26 @@ func (db *LokiDB) formatLabelsString(labels map[string]string) string {
 
 // FormatPayload formats log entries into Loki Push API format
 func (db *LokiDB) FormatPayload(logs []LogEntry) (string, string) {
-	// Group logs by labels
-	streams := make(map[string][]map[string]interface{})
+	var buf bytes.Buffer
+	return db.formatPayloadInternal(logs, &buf)
+}
+
+// FormatPayloadWithBuffer formats logs using provided buffer for efficiency
+func (db *LokiDB) FormatPayloadWithBuffer(logs []LogEntry, buf *bytes.Buffer) (string, string) {
+	buf.Reset() // Clear the buffer
+	return db.formatPayloadInternal(logs, buf)
+}
+
+// formatPayloadInternal contains the shared formatting logic with optimized JSON encoding
+func (db *LokiDB) formatPayloadInternal(logs []LogEntry, buf *bytes.Buffer) (string, string) {
+	// Group logs by labels - use map[string][]interface{} for direct storage
+	streamsByLabels := make(map[string][]interface{})
+	labelsByString := make(map[string]map[string]string) // Cache parsed labels
+
+	// Create a temporary buffer for individual log JSON marshaling
+	var tempBuf bytes.Buffer
+	tempEncoder := json.NewEncoder(&tempBuf)
+	tempEncoder.SetEscapeHTML(false)
 
 	for _, log := range logs {
 		// Make sure timestamp is in the correct format (Loki needs Unix timestamp in nanoseconds)
@@ -128,64 +156,63 @@ func (db *LokiDB) FormatPayload(logs []LogEntry) (string, string) {
 		labels := db.extractLabels(log)
 		labelsStr := db.formatLabelsString(labels)
 
-		// Convert log to string
-		logJSON, err := json.Marshal(log)
-		if err != nil {
+		// Store parsed labels to avoid re-parsing later
+		if _, exists := labelsByString[labelsStr]; !exists {
+			labelsByString[labelsStr] = labels
+		}
+
+		// Use temporary buffer for single log JSON encoding (avoids allocation)
+		tempBuf.Reset()
+		if err := tempEncoder.Encode(log); err != nil {
 			continue
 		}
 
-		// Add to the appropriate stream
-		if _, ok := streams[labelsStr]; !ok {
-			streams[labelsStr] = []map[string]interface{}{}
+		// Get JSON string and remove trailing newline added by encoder
+		logJSON := strings.TrimRight(tempBuf.String(), "\n")
+
+		// Add to the appropriate stream - store as []interface{} directly for Loki format
+		if _, ok := streamsByLabels[labelsStr]; !ok {
+			streamsByLabels[labelsStr] = []interface{}{}
 		}
 
-		streams[labelsStr] = append(streams[labelsStr], map[string]interface{}{
-			"ts":   timestamp,
-			"line": string(logJSON),
+		streamsByLabels[labelsStr] = append(streamsByLabels[labelsStr], []interface{}{
+			fmt.Sprintf("%d", timestamp),
+			logJSON,
 		})
 	}
 
-	// Format into Loki Push API format
-	lokiRequest := map[string]interface{}{
-		"streams": []map[string]interface{}{},
-	}
+	// Build Loki request structure directly without intermediate maps
+	lokiStreams := make([]interface{}, 0, len(streamsByLabels))
 
-	for labelsStr, values := range streams {
+	for labelsStr, values := range streamsByLabels {
 		stream := map[string]interface{}{
-			"stream": map[string]interface{}{},
-			"values": [][]interface{}{},
+			"stream": labelsByString[labelsStr], // Use cached parsed labels
+			"values": values,                    // Direct assignment, no copying
 		}
-
-		// Parse labels from string back to object
-		labelsObj := make(map[string]string)
-		labelsStr = strings.TrimPrefix(labelsStr, "{")
-		labelsStr = strings.TrimSuffix(labelsStr, "}")
-		labelPairs := strings.Split(labelsStr, ",")
-
-		for _, pair := range labelPairs {
-			parts := strings.SplitN(pair, "=", 2)
-			if len(parts) == 2 {
-				key := parts[0]
-				value := strings.Trim(parts[1], "\"")
-				labelsObj[key] = value
-			}
-		}
-
-		stream["stream"] = labelsObj
-
-		// Add log values
-		for _, v := range values {
-			stream["values"] = append(stream["values"].([][]interface{}), []interface{}{
-				fmt.Sprintf("%d", v["ts"]),
-				v["line"],
-			})
-		}
-
-		lokiRequest["streams"] = append(lokiRequest["streams"].([]map[string]interface{}), stream)
+		lokiStreams = append(lokiStreams, stream)
 	}
 
-	payload, _ := json.Marshal(lokiRequest)
-	return string(payload), "application/json"
+	lokiRequest := map[string]interface{}{
+		"streams": lokiStreams,
+	}
+
+	// Single JSON encoding using streaming encoder
+	encoder := json.NewEncoder(buf)
+	encoder.SetEscapeHTML(false) // Disable HTML escaping for performance
+
+	if err := encoder.Encode(lokiRequest); err != nil {
+		// Simplified fallback - reuse the same encoder with a fresh buffer
+		buf.Reset()
+		encoder = json.NewEncoder(buf)
+		encoder.SetEscapeHTML(false)
+
+		// If this also fails, return error indication
+		if err := encoder.Encode(lokiRequest); err != nil {
+			return `{"streams":[]}`, "application/json"
+		}
+	}
+
+	return buf.String(), "application/json"
 }
 
 // SendLogs sends a batch of logs to Loki
@@ -228,13 +255,16 @@ func (db *LokiDB) SendLogs(logs []LogEntry) error {
 		// Update metrics
 		db.UpdateMetric("request_duration", requestEnd.Sub(requestStart).Seconds())
 
+		// CRITICAL: Close response body even on error to prevent memory leaks
+		if resp != nil && resp.Body != nil {
+			defer resp.Body.Close()
+		}
+
 		if err != nil {
 			lastErr = err
 			db.IncrementMetric("failed_requests", 1)
 			continue
 		}
-
-		defer resp.Body.Close()
 
 		// Check response status
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -252,6 +282,71 @@ func (db *LokiDB) SendLogs(logs []LogEntry) error {
 		// If it's a server error (5xx), retry
 		// For client errors (4xx), no point in retrying
 		if resp.StatusCode < 500 {
+			return lastErr
+		}
+	}
+
+	return lastErr
+}
+
+// SendLogsWithBuffer sends logs using buffer pool for better performance
+func (db *LokiDB) SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer) error {
+	if len(logs) == 0 {
+		return nil
+	}
+
+	payload, contentType := db.FormatPayloadWithBuffer(logs, buf)
+
+	var lastErr error
+
+	// Retry with exponential backoff on server errors
+	for attempt := 0; attempt <= db.RetryCount; attempt++ {
+		if attempt > 0 {
+			backoff := db.RetryDelay * time.Duration(1<<uint(attempt-1))
+			if db.Verbose {
+				fmt.Printf("Loki: Retrying %d/%d after error: %v (backoff: %v)\n",
+					attempt, db.RetryCount, lastErr, backoff)
+			}
+			time.Sleep(backoff)
+		}
+
+		// Create request (use URL as-is, like the original implementation)
+		req, err := http.NewRequest("POST", db.URL, strings.NewReader(payload))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create request: %w", err)
+			continue
+		}
+
+		req.Header.Set("Content-Type", contentType)
+
+		// Execute request using the shared HTTP client (NOT creating new client every time)
+		resp, err := db.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			continue
+		}
+
+		// CRITICAL: Close response body to prevent memory leaks
+		if resp != nil && resp.Body != nil {
+			defer resp.Body.Close()
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			// Success - update metrics just like SendLogs does
+			db.IncrementMetric("successful_requests", 1)
+			db.IncrementMetric("total_logs", float64(len(logs)))
+			return nil
+		}
+
+		// Read response body for error information
+		body, _ := io.ReadAll(resp.Body)
+		lastErr = fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, body)
+
+		// Update failed requests metric
+		db.IncrementMetric("failed_requests", 1)
+
+		// For 4xx errors, don't retry
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			return lastErr
 		}
 	}

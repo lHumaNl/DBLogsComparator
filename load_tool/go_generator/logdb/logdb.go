@@ -1,6 +1,7 @@
 package logdb
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -39,6 +40,12 @@ type LogDB interface {
 
 	// FormatPayload formats log entries into the required format for sending
 	FormatPayload(logs []LogEntry) (string, string)
+
+	// FormatPayloadWithBuffer formats log entries using provided buffer for efficiency
+	FormatPayloadWithBuffer(logs []LogEntry, buf *bytes.Buffer) (string, string)
+
+	// SendLogsWithBuffer sends logs using buffer pool for better performance
+	SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer) error
 }
 
 // BaseLogDB - base structure with common functionality for all log databases

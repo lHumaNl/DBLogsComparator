@@ -9,6 +9,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CombinedConfig - configuration for combined mode timing parameters only
+type CombinedConfig struct {
+	MaxPerf   LoadTestConfig `yaml:"maxPerf"`
+	Stability LoadTestConfig `yaml:"stability"`
+}
+
 // Config - main configuration structure
 type Config struct {
 	Mode            string          `yaml:"mode"`
@@ -17,19 +23,22 @@ type Config struct {
 	DurationSeconds int             `yaml:"durationSeconds"`        // Global duration
 	Metrics         bool            `yaml:"metrics"`                // Whether metrics are enabled
 	MetricsPort     int             `yaml:"metrics_port,omitempty"` // Port for metrics (if not specified, 9090 is used)
+	Verbose         *bool           `yaml:"verbose,omitempty"`      // Global verbose setting (pointer for optional field)
+	Debug           *bool           `yaml:"debug,omitempty"`        // Global debug setting (pointer for optional field)
+	Combined        CombinedConfig  `yaml:"combined"`               // Combined mode timing configuration
 	Generator       GeneratorConfig `yaml:"generator"`
 	Querier         QuerierConfig   `yaml:"querier"`
 }
 
 // LoadTestConfig - configuration for specific load testing mode
 type LoadTestConfig struct {
-	Steps            int `yaml:"steps,omitempty"`            // Number of steps for maxPerf mode
-	StepDuration     int `yaml:"stepDuration"`               // Duration of each step in seconds
-	Impact           int `yaml:"impact"`                     // Stabilization time in seconds
-	BaseRPS          int `yaml:"baseRPS"`                    // Base RPS for calculations
-	StartPercent     int `yaml:"startPercent,omitempty"`     // Starting percentage for maxPerf mode
-	IncrementPercent int `yaml:"incrementPercent,omitempty"` // Increment percentage for maxPerf mode
-	StepPercent      int `yaml:"stepPercent,omitempty"`      // Fixed percentage for stability mode
+	Steps            int     `yaml:"steps,omitempty"`            // Number of steps for maxPerf mode
+	StepDuration     int     `yaml:"stepDuration"`               // Duration of each step in seconds
+	Impact           int     `yaml:"impact"`                     // Stabilization time in seconds
+	BaseRPS          float64 `yaml:"baseRPS"`                    // Base RPS for calculations
+	StartPercent     float64 `yaml:"startPercent,omitempty"`     // Starting percentage for maxPerf mode
+	IncrementPercent float64 `yaml:"incrementPercent,omitempty"` // Increment percentage for maxPerf mode
+	StepPercent      float64 `yaml:"stepPercent,omitempty"`      // Fixed percentage for stability mode
 }
 
 // GeneratorConfig - log generator configuration
@@ -46,28 +55,39 @@ type GeneratorConfig struct {
 	Distribution map[string]int `yaml:"distribution"`
 	MaxRetries   int            `yaml:"maxRetries"`
 	RetryDelayMs int            `yaml:"retryDelayMs"`
-	TimeoutMs    int            `yaml:"timeoutMs"` // HTTP request timeout in milliseconds
-	Verbose      bool           `yaml:"verbose"`
+	TimeoutMs    int            `yaml:"timeoutMs"`         // HTTP request timeout in milliseconds
+	Verbose      *bool          `yaml:"verbose,omitempty"` // Module-specific verbose override (pointer for optional field)
+	Debug        *bool          `yaml:"debug,omitempty"`   // Module-specific debug override (pointer for optional field)
 }
 
 // TimeRangeConfig - configuration for time ranges
 type TimeRangeConfig struct {
-	Last5m  float64               `yaml:"last5m"`
-	Last15m float64               `yaml:"last15m"`
-	Last30m float64               `yaml:"last30m"`
-	Last1h  float64               `yaml:"last1h"`
-	Last2h  float64               `yaml:"last2h"`
-	Last4h  float64               `yaml:"last4h"`
-	Last8h  float64               `yaml:"last8h"`
-	Last12h float64               `yaml:"last12h"`
-	Last24h float64               `yaml:"last24h"`
-	Last48h float64               `yaml:"last48h"`
-	Last72h float64               `yaml:"last72h"`
-	Custom  CustomTimeRangeConfig `yaml:"custom"`
+	Last5m       float64               `yaml:"last5m"`
+	Last15m      float64               `yaml:"last15m"`
+	Last30m      float64               `yaml:"last30m"`
+	Last1h       float64               `yaml:"last1h"`
+	Last2h       float64               `yaml:"last2h"`
+	Last4h       float64               `yaml:"last4h"`
+	Last8h       float64               `yaml:"last8h"`
+	Last12h      float64               `yaml:"last12h"`
+	Last24h      float64               `yaml:"last24h"`
+	Last48h      float64               `yaml:"last48h"`
+	Last72h      float64               `yaml:"last72h"`
+	CustomPeriod CustomPeriodConfig    `yaml:"custom_period"`
+	Custom       CustomTimeRangeConfig `yaml:"custom"`
+}
+
+// CustomPeriodConfig - configuration for custom period queries
+type CustomPeriodConfig struct {
+	Percent     float64            `yaml:"percent"`
+	PeriodStart string             `yaml:"period_start"`
+	PeriodEnd   string             `yaml:"period_end"`
+	Times       map[string]float64 `yaml:"times"`
 }
 
 // CustomTimeRangeConfig - configuration for custom time ranges
 type CustomTimeRangeConfig struct {
+	Percent                   float64            `yaml:"percent"`
 	PercentsOffsetLeftBorder  map[string]float64 `yaml:"percents_offset_left_border"`
 	PercentsOffsetRightBorder map[string]float64 `yaml:"percents_offset_right_border"`
 }
@@ -83,8 +103,9 @@ type QuerierConfig struct {
 	// WorkerCount removed - now using runtime.NumCPU() * 4 async processors
 	MaxRetries   int             `yaml:"maxRetries"`
 	RetryDelayMs int             `yaml:"retryDelayMs"`
-	TimeoutMs    int             `yaml:"timeoutMs"` // HTTP request timeout in milliseconds
-	Verbose      bool            `yaml:"verbose"`
+	TimeoutMs    int             `yaml:"timeoutMs"`         // HTTP request timeout in milliseconds
+	Verbose      *bool           `yaml:"verbose,omitempty"` // Module-specific verbose override (pointer for optional field)
+	Debug        *bool           `yaml:"debug,omitempty"`   // Module-specific debug override (pointer for optional field)
 	Distribution map[string]int  `yaml:"distribution"`
 	Times        TimeRangeConfig `yaml:"times"`
 }
@@ -190,9 +211,45 @@ func (g *GeneratorConfig) GetLoadTestConfig(loadMode string) LoadTestConfig {
 	}
 }
 
+// GetLoadTestConfig returns the load test configuration for the specified mode (combined)
+func (c *CombinedConfig) GetLoadTestConfig(loadMode string) LoadTestConfig {
+	switch loadMode {
+	case "maxPerf":
+		return c.MaxPerf
+	case "stability":
+		return c.Stability
+	default:
+		return c.Stability // Default to stability
+	}
+}
+
 // GetConnectionCount returns the number of HTTP connections based on CPU count
 func (g *GeneratorConfig) GetConnectionCount() int {
 	return runtime.NumCPU() * 4
+}
+
+// IsVerbose returns the effective verbose setting for the generator
+// Module-specific setting overrides global setting, defaults to false
+func (g *GeneratorConfig) IsVerbose(globalVerbose *bool) bool {
+	if g.Verbose != nil {
+		return *g.Verbose
+	}
+	if globalVerbose != nil {
+		return *globalVerbose
+	}
+	return false // Default value
+}
+
+// IsDebug returns the effective debug setting for the generator
+// Module-specific setting overrides global setting, defaults to false
+func (g *GeneratorConfig) IsDebug(globalDebug *bool) bool {
+	if g.Debug != nil {
+		return *g.Debug
+	}
+	if globalDebug != nil {
+		return *globalDebug
+	}
+	return false // Default value
 }
 
 // GetURL returns the URL for the selected logging system (querier)
@@ -237,6 +294,30 @@ func (q *QuerierConfig) GetLoadTestConfig(loadMode string) LoadTestConfig {
 // GetConnectionCount returns the number of HTTP connections based on CPU count for querier
 func (q *QuerierConfig) GetConnectionCount() int {
 	return runtime.NumCPU() * 4
+}
+
+// IsVerbose returns the effective verbose setting for the querier
+// Module-specific setting overrides global setting, defaults to false
+func (q *QuerierConfig) IsVerbose(globalVerbose *bool) bool {
+	if q.Verbose != nil {
+		return *q.Verbose
+	}
+	if globalVerbose != nil {
+		return *globalVerbose
+	}
+	return false // Default value
+}
+
+// IsDebug returns the effective debug setting for the querier
+// Module-specific setting overrides global setting, defaults to false
+func (q *QuerierConfig) IsDebug(globalDebug *bool) bool {
+	if q.Debug != nil {
+		return *q.Debug
+	}
+	if globalDebug != nil {
+		return *globalDebug
+	}
+	return false // Default value
 }
 
 // SaveConfig saves the configuration to a YAML file
@@ -292,6 +373,11 @@ func validateConfig(config *Config) error {
 	// Validate querier configuration
 	if err := validateQuerierConfig(&config.Querier); err != nil {
 		return fmt.Errorf("querier config error: %v", err)
+	}
+
+	// Validate combined configuration
+	if err := validateCombinedConfig(&config.Combined); err != nil {
+		return fmt.Errorf("combined config error: %v", err)
 	}
 
 	return nil
@@ -438,6 +524,175 @@ func validateQuerierConfig(config *QuerierConfig) error {
 		}
 		if totalWeight == 0 {
 			return fmt.Errorf("total weight of query type distribution is zero")
+		}
+	}
+
+	// Validate times configuration
+	if err := validateTimeRangeConfig(&config.Times); err != nil {
+		return fmt.Errorf("times config error: %v", err)
+	}
+
+	return nil
+}
+
+// validateTimeRangeConfig validates time range configuration
+func validateTimeRangeConfig(config *TimeRangeConfig) error {
+	// Calculate total percentage from all time configurations
+	totalPercent := config.Last5m + config.Last15m + config.Last30m + config.Last1h +
+		config.Last2h + config.Last4h + config.Last8h + config.Last12h +
+		config.Last24h + config.Last48h + config.Last72h
+
+	// Add custom_period percent if configured
+	if config.CustomPeriod.Percent > 0 {
+		totalPercent += config.CustomPeriod.Percent
+
+		// Validate custom_period configuration
+		if err := validateCustomPeriodConfig(&config.CustomPeriod); err != nil {
+			return fmt.Errorf("custom_period config error: %v", err)
+		}
+	}
+
+	// Add custom percent if configured
+	if config.Custom.Percent > 0 {
+		totalPercent += config.Custom.Percent
+
+		// Validate custom configuration
+		if err := validateCustomTimeRangeConfig(&config.Custom); err != nil {
+			return fmt.Errorf("custom config error: %v", err)
+		}
+	}
+
+	// Check if there are any configured percentages at all
+	if totalPercent == 0.0 {
+		return fmt.Errorf("no time ranges configured - at least one time range must have a percentage > 0")
+	}
+
+	// Validate that total percentage equals 100%
+	if totalPercent != 100.0 {
+		return fmt.Errorf("total percentage in times configuration must equal 100%%, got %.1f%%", totalPercent)
+	}
+
+	return nil
+}
+
+// validateCombinedConfig validates combined-specific configuration
+func validateCombinedConfig(config *CombinedConfig) error {
+	// Validate timing-only parameters for combined mode (no baseRPS/percentages validation)
+	if err := validateCombinedTimingConfig(config.MaxPerf, "maxPerf"); err != nil {
+		return fmt.Errorf("maxPerf config error: %v", err)
+	}
+	if err := validateCombinedTimingConfig(config.Stability, "stability"); err != nil {
+		return fmt.Errorf("stability config error: %v", err)
+	}
+
+	return nil
+}
+
+// validateCombinedTimingConfig validates only timing parameters for combined mode
+func validateCombinedTimingConfig(config LoadTestConfig, mode string) error {
+	// Validate step duration
+	if config.StepDuration <= 0 {
+		return fmt.Errorf("stepDuration must be positive: %d", config.StepDuration)
+	}
+
+	// Validate impact time
+	if config.Impact < 0 {
+		return fmt.Errorf("impact cannot be negative: %d", config.Impact)
+	}
+
+	// Mode-specific validation for timing parameters only
+	if mode == "maxPerf" {
+		if config.Steps <= 0 {
+			return fmt.Errorf("steps must be positive for maxPerf mode: %d", config.Steps)
+		}
+		// Note: baseRPS, startPercent, incrementPercent are taken from generator/querier sections
+	}
+	// For stability mode, stepPercent and baseRPS are taken from generator/querier sections
+
+	return nil
+}
+
+// validateCustomPeriodConfig validates custom period configuration
+func validateCustomPeriodConfig(config *CustomPeriodConfig) error {
+	// Validate percent
+	if config.Percent < 0 || config.Percent > 100 {
+		return fmt.Errorf("percent must be between 0 and 100, got %.1f", config.Percent)
+	}
+
+	// Validate period dates
+	if config.PeriodStart == "" {
+		return fmt.Errorf("period_start is required")
+	}
+	if config.PeriodEnd == "" {
+		return fmt.Errorf("period_end is required")
+	}
+
+	// Validate period dates format
+	if _, err := time.Parse("02.01.2006 15:04:05", config.PeriodStart); err != nil {
+		return fmt.Errorf("invalid period_start format '%s': %v (expected DD.MM.YYYY HH:MM:SS)", config.PeriodStart, err)
+	}
+
+	if _, err := time.Parse("02.01.2006 15:04:05", config.PeriodEnd); err != nil {
+		return fmt.Errorf("invalid period_end format '%s': %v (expected DD.MM.YYYY HH:MM:SS)", config.PeriodEnd, err)
+	}
+
+	// Parse dates to validate period_end > period_start
+	periodStart, _ := time.Parse("02.01.2006 15:04:05", config.PeriodStart)
+	periodEnd, _ := time.Parse("02.01.2006 15:04:05", config.PeriodEnd)
+
+	if !periodEnd.After(periodStart) {
+		return fmt.Errorf("period_end must be after period_start: start=%s, end=%s", config.PeriodStart, config.PeriodEnd)
+	}
+
+	// Validate times distribution
+	if len(config.Times) > 0 {
+		totalWeight := 0.0
+		for duration, weight := range config.Times {
+			if weight < 0 {
+				return fmt.Errorf("negative weight for duration '%s': %.1f", duration, weight)
+			}
+			totalWeight += weight
+		}
+		if totalWeight != 100.0 {
+			return fmt.Errorf("total weight of custom_period times must equal 100%%, got %.1f%%", totalWeight)
+		}
+	}
+
+	return nil
+}
+
+// validateCustomTimeRangeConfig validates custom time range configuration
+func validateCustomTimeRangeConfig(config *CustomTimeRangeConfig) error {
+	// Validate percent
+	if config.Percent < 0 || config.Percent > 100 {
+		return fmt.Errorf("percent must be between 0 and 100, got %.1f", config.Percent)
+	}
+
+	// Validate left border offset configurations
+	if len(config.PercentsOffsetLeftBorder) > 0 {
+		totalWeight := 0.0
+		for duration, weight := range config.PercentsOffsetLeftBorder {
+			if weight < 0 {
+				return fmt.Errorf("negative weight for left border duration '%s': %.1f", duration, weight)
+			}
+			totalWeight += weight
+		}
+		if totalWeight != 100.0 {
+			return fmt.Errorf("total weight of custom percents_offset_left_border must equal 100%%, got %.1f%%", totalWeight)
+		}
+	}
+
+	// Validate right border offset configurations
+	if len(config.PercentsOffsetRightBorder) > 0 {
+		totalWeight := 0.0
+		for duration, weight := range config.PercentsOffsetRightBorder {
+			if weight < 0 {
+				return fmt.Errorf("negative weight for right border duration '%s': %.1f", duration, weight)
+			}
+			totalWeight += weight
+		}
+		if totalWeight != 100.0 {
+			return fmt.Errorf("total weight of custom percents_offset_right_border must equal 100%%, got %.1f%%", totalWeight)
 		}
 	}
 

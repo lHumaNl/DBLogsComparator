@@ -105,18 +105,28 @@ func LogDebug(component, message string, fields logrus.Fields) {
 
 // LogQueryError logs a query error with detailed context and to error file
 func LogQueryError(workerID int, queryType, system string, err error, query string) {
-	LogError("querier", "query_execution", err, logrus.Fields{
-		"worker_id":  workerID,
-		"query_type": queryType,
-		"system":     system,
-		"query":      query,
-	})
+	// Get current timestamp
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
 
-	// Also log to timestamped error file (using test start time)
-	timestamp := TestStartTime.Format("2006-01-02_15-04-05")
-	filename := fmt.Sprintf("./logs/querier_err_%s.log", timestamp)
-	logToErrorFile(filename, fmt.Sprintf("Processor %d: %s query error: %v. Query: %s",
-		workerID, queryType, err, query))
+	// Create the complete message with timestamp - exactly what you want
+	fullMessage := fmt.Sprintf("[%s Processor %d, %s, %s]: %v, Query: %s",
+		timestamp, workerID, system, queryType, err, query)
+
+	// Console: exact same format
+	fmt.Printf("%s\n", fullMessage)
+
+	// File: write directly without logToErrorFile adding timestamp
+	logTimestamp := TestStartTime.Format("2006-01-02_15-04-05")
+	filename := fmt.Sprintf("./load_tests/querier_err_%s.log", logTimestamp)
+
+	// Write directly to file without extra timestamp
+	file, fileErr := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if fileErr != nil {
+		return
+	}
+	defer file.Close()
+
+	file.WriteString(fullMessage + "\n")
 }
 
 // LogQuerySuccess logs a successful query with context
@@ -141,7 +151,7 @@ func LogGeneratorError(workerID int, system string, err error, request string) {
 
 	// Also log to timestamped error file (using test start time)
 	timestamp := TestStartTime.Format("2006-01-02_15-04-05")
-	filename := fmt.Sprintf("./logs/generator_err_%s.log", timestamp)
+	filename := fmt.Sprintf("./load_tests/generator_err_%s.log", timestamp)
 	logToErrorFile(filename, fmt.Sprintf("Processor %d: %s request error: %v. Request: %s",
 		workerID, system, err, request))
 }

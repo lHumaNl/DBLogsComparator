@@ -3,15 +3,14 @@ package pkg
 import (
 	"net/http"
 	"runtime"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // ClientPool - HTTP client pool for connection reuse in querier
 type ClientPool struct {
-	clients []*http.Client
-	mutex   sync.Mutex
-	index   int
+	clients     []*http.Client
+	atomicIndex uint64
 }
 
 // NewClientPool creates a new HTTP client pool with optimized configuration for querier
@@ -47,12 +46,8 @@ func NewClientPool(size int, timeout time.Duration) *ClientPool {
 
 // Get returns an HTTP client from the pool using round-robin
 func (p *ClientPool) Get() *http.Client {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	client := p.clients[p.index]
-	p.index = (p.index + 1) % len(p.clients)
-	return client
+	index := atomic.AddUint64(&p.atomicIndex, 1)
+	return p.clients[index%uint64(len(p.clients))]
 }
 
 // Size returns the size of the pool

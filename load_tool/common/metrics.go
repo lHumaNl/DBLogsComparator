@@ -1,7 +1,6 @@
 package common
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -29,13 +28,13 @@ var (
 	WriteRequestsSuccess = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_write_requests_success",
 		Help: "Number of successful log write requests",
-	}, []string{"system", "log_type"})
+	}, []string{"system"})
 
 	// WriteRequestsFailure counts the number of failed log write requests
 	WriteRequestsFailure = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dblogscomp_write_requests_failure",
 		Help: "Number of failed log write requests",
-	}, []string{"system", "log_type", "error_type"})
+	}, []string{"system", "error_type"})
 
 	// WriteLogsTotal counts the total number of sent logs
 	// by types and destination systems
@@ -50,11 +49,18 @@ var (
 		Help: "Number of retried write requests",
 	}, []string{"system", "retry_attempt"})
 
-	// WriteDurationHistogram measures the execution time of write requests
-	WriteDurationHistogram = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "dblogscomp_write_duration_seconds",
-		Help:    "Histogram of write request execution times",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // from 1ms to ~16s
+	// WriteDurationSummary measures the execution time of write requests
+	WriteDurationSummary = promauto.NewSummaryVec(prometheus.SummaryOpts{
+		Name: "dblogscomp_write_duration_seconds",
+		Help: "Summary of write request execution times",
+		Objectives: map[float64]float64{
+			0.5:  0.05,  // 50-й процентиль с точностью ±5%
+			0.75: 0.05,  // 75-й процентиль с точностью ±5%
+			0.9:  0.01,  // 90-й процентиль с точностью ±1%
+			0.95: 0.01,  // 95-й процентиль с точностью ±1%
+			0.99: 0.001, // 99-й процентиль с точностью ±0.1%
+		},
+		MaxAge: time.Minute * 5, // окно наблюдения 5 минут
 	}, []string{"system", "status"})
 
 	// WriteBatchSizeGauge shows the current log batch size
@@ -108,16 +114,30 @@ var (
 		Help: "Number of failed queries by type in querier",
 	}, []string{"type", "system", "error_type"})
 
-	ResultSizeHistogram = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "dblogscomp_querier_result_size_bytes", // renamed for clarity
-		Help:    "Histogram of query result sizes in querier",
-		Buckets: prometheus.ExponentialBuckets(1024, 2, 10), // from 1KB to ~1MB
+	ResultSizeSummary = promauto.NewSummaryVec(prometheus.SummaryOpts{
+		Name: "dblogscomp_querier_result_size_bytes", // renamed for clarity
+		Help: "Summary of query result sizes in querier",
+		Objectives: map[float64]float64{
+			0.5:  0.05,  // 50-й процентиль с точностью ±5%
+			0.75: 0.05,  // 75-й процентиль с точностью ±5%
+			0.9:  0.01,  // 90-й процентиль с точностью ±1%
+			0.95: 0.01,  // 95-й процентиль с точностью ±1%
+			0.99: 0.001, // 99-й процентиль с точностью ±0.1%
+		},
+		MaxAge: time.Minute * 5, // окно наблюдения 5 минут
 	}, []string{"system", "type"})
 
-	ResultHitsHistogram = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "dblogscomp_querier_result_hits", // renamed for clarity
-		Help:    "Histogram of query result hits in querier",
-		Buckets: prometheus.ExponentialBuckets(1, 2, 15), // from 1 to ~16K with a multiplier of 2
+	ResultHitsSummary = promauto.NewSummaryVec(prometheus.SummaryOpts{
+		Name: "dblogscomp_querier_result_hits", // renamed for clarity
+		Help: "Summary of query result hits in querier",
+		Objectives: map[float64]float64{
+			0.5:  0.05,  // 50-й процентиль с точностью ±5%
+			0.75: 0.05,  // 75-й процентиль с точностью ±5%
+			0.9:  0.01,  // 90-й процентиль с точностью ±1%
+			0.95: 0.01,  // 95-й процентиль с точностью ±1%
+			0.99: 0.001, // 99-й процентиль с точностью ±0.1%
+		},
+		MaxAge: time.Minute * 5, // окно наблюдения 5 минут
 	}, []string{"system", "type"})
 
 	// Metrics by systems
@@ -171,6 +191,9 @@ var (
 
 	// Current system name for metrics
 	currentSystemName string
+
+	// Channel to stop updateRealTimeMetrics goroutine
+	metricsStopChan chan struct{}
 )
 
 // normalizeSystemName normalizes system names to lowercase
@@ -180,7 +203,7 @@ func normalizeSystemName(system string) string {
 		return "elasticsearch"
 	case "loki":
 		return "loki"
-	case "victorialogs":
+	case "victorialogs", "victoria":
 		return "victorialogs"
 	default:
 		return strings.ToLower(system)
@@ -245,15 +268,12 @@ func IncrementReadRequests(system string) {
 // IncrementSuccessfulWrite increases the successful write requests counter
 // system - logging system name (elasticsearch, loki, victorialogs)
 // logType - log type (application, web_access, web_error, event, metric)
-func IncrementSuccessfulWrite(system, logType string) {
+func IncrementSuccessfulWrite(system string) {
 	if system == "" {
 		system = "unknown"
 	}
-	if logType == "" {
-		logType = "unknown"
-	}
 	normalizedSystem := normalizeSystemName(system)
-	WriteRequestsSuccess.WithLabelValues(normalizedSystem, logType).Inc()
+	WriteRequestsSuccess.WithLabelValues(normalizedSystem).Inc()
 }
 
 // IncrementFailedWrite increases the failed write requests counter
@@ -269,7 +289,7 @@ func IncrementFailedWrite(system, logType, errorType string) {
 		errorType = "unknown"
 	}
 	normalizedSystem := normalizeSystemName(system)
-	WriteRequestsFailure.WithLabelValues(normalizedSystem, logType, errorType).Inc()
+	WriteRequestsFailure.WithLabelValues(normalizedSystem, errorType).Inc()
 	ErrorTypeCounter.WithLabelValues(errorType, "write", normalizedSystem).Inc()
 }
 
@@ -329,7 +349,7 @@ func ObserveWriteDuration(system, status string, duration float64) {
 		status = "unknown"
 	}
 	normalizedSystem := normalizeSystemName(system)
-	WriteDurationHistogram.WithLabelValues(normalizedSystem, status).Observe(duration)
+	WriteDurationSummary.WithLabelValues(normalizedSystem, status).Observe(duration)
 }
 
 // ObserveReadDuration records the execution time of a read request
@@ -474,6 +494,11 @@ func InitPrometheus(system string, bulkSize int) {
 	// Set the current system name for RPS metrics
 	currentSystemName = system
 
+	// Initialize stop channel if not already done
+	if metricsStopChan == nil {
+		metricsStopChan = make(chan struct{})
+	}
+
 	// Start a separate goroutine to update metrics in real time
 	go updateRealTimeMetrics()
 
@@ -484,43 +509,49 @@ func InitPrometheus(system string, bulkSize int) {
 
 }
 
-// updateRealTimeMetrics updates metrics in real time
+// updateRealTimeMetrics updates metrics in real time with graceful shutdown
 func updateRealTimeMetrics() {
 	lastWriteRequests := int64(0)
 	lastReadRequests := int64(0)
 	lastTime := time.Now()
 
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		time.Sleep(1 * time.Second)
+		select {
+		case <-metricsStopChan:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			elapsed := now.Sub(lastTime).Seconds()
+			lastTime = now
 
-		now := time.Now()
-		elapsed := now.Sub(lastTime).Seconds()
-		lastTime = now
+			// Get the current values from atomic counters
+			currentWriteRequests := atomic.LoadInt64(&writeRequestsCount)
+			currentReadRequests := atomic.LoadInt64(&readRequestsCount)
 
-		// Get the current values from atomic counters
-		currentWriteRequests := atomic.LoadInt64(&writeRequestsCount)
-		currentReadRequests := atomic.LoadInt64(&readRequestsCount)
+			// Calculate RPS and QPS
+			writeRequests := float64(currentWriteRequests - lastWriteRequests)
+			readRequests := float64(currentReadRequests - lastReadRequests)
 
-		// Calculate RPS and QPS
-		writeRequests := float64(currentWriteRequests - lastWriteRequests)
-		readRequests := float64(currentReadRequests - lastReadRequests)
+			rps := writeRequests / elapsed
+			qps := readRequests / elapsed
 
-		rps := writeRequests / elapsed
-		qps := readRequests / elapsed
+			// Update metrics with component labels using the current system
+			if currentSystemName != "" {
+				normalizedSystem := normalizeSystemName(currentSystemName)
+				CurrentRPS.WithLabelValues("generator", normalizedSystem).Set(rps)
+				CurrentRPS.WithLabelValues("querier", normalizedSystem).Set(qps)
+			}
 
-		// Update metrics with component labels using the current system
-		if currentSystemName != "" {
-			normalizedSystem := normalizeSystemName(currentSystemName)
-			CurrentRPS.WithLabelValues("generator", normalizedSystem).Set(rps)
-			CurrentRPS.WithLabelValues("querier", normalizedSystem).Set(qps)
+			// Update general operation counters if there's activity
+			// Removed updating OperationCounter for system="total" to fix dblogscomp_operations_total metric
+
+			// Store values for the next cycle
+			lastWriteRequests = currentWriteRequests
+			lastReadRequests = currentReadRequests
 		}
-
-		// Update general operation counters if there's activity
-		// Removed updating OperationCounter for system="total" to fix dblogscomp_operations_total metric
-
-		// Store values for the next cycle
-		lastWriteRequests = currentWriteRequests
-		lastReadRequests = currentReadRequests
 	}
 }
 
@@ -554,17 +585,24 @@ func StartMetricsServer(port int) {
 	metricsServerStarted = true
 }
 
-// StopMetricsServer gracefully shuts down the metrics server
+// StopMetricsServer forcefully shuts down the metrics server and stops metrics goroutine
 func StopMetricsServer() {
-	if metricsServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err := metricsServer.Shutdown(ctx); err != nil {
-			fmt.Printf("Error shutting down metrics server: %v\n", err)
-		} else {
-			fmt.Println("Metrics server stopped gracefully")
+	// Stop the updateRealTimeMetrics goroutine first
+	if metricsStopChan != nil {
+		select {
+		case metricsStopChan <- struct{}{}:
+		default:
+			// Channel might be full or closed, ignore
 		}
+		close(metricsStopChan)
+		metricsStopChan = nil
+	}
+
+	// Then stop the metrics server
+	if metricsServer != nil {
+		// Force close the server immediately to prevent blocking process termination
+		fmt.Println("Force closing metrics server")
+		metricsServer.Close() // Immediate close instead of graceful Shutdown()
 		metricsServer = nil
 		metricsServerStarted = false
 	}

@@ -28,20 +28,8 @@ func NewElasticsearchDB(baseURL string, options Options) (*ElasticsearchDB, erro
 		IndexPattern: "logs-2006.01.02", // Default value - uses Go time format
 	}
 
-	// Creating HTTP client with dynamic connection count
-	maxConns := options.ConnectionCount
-	if maxConns <= 0 {
-		maxConns = 100 // fallback default
-	}
-	db.httpClient = &http.Client{
-		Timeout: db.Timeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        maxConns,
-			MaxIdleConnsPerHost: maxConns,
-			MaxConnsPerHost:     maxConns,
-			IdleConnTimeout:     90 * time.Second,
-		},
-	}
+	// Use shared connection pool manager for generator
+	db.httpClient = GetGeneratorClient("elasticsearch", baseURL, options)
 
 	// If URL doesn't end with /_bulk, add it
 	if !strings.HasSuffix(db.URL, "/_bulk") {
@@ -201,12 +189,39 @@ func (db *ElasticsearchDB) getCurrentIndex() string {
 // FormatPayload formats log entries into Bulk API format for Elasticsearch
 func (db *ElasticsearchDB) FormatPayload(logs []LogEntry) (string, string) {
 	var buf bytes.Buffer
+	return db.formatPayloadInternal(logs, &buf)
+}
+
+// FormatPayloadWithBuffer formats logs using provided buffer for efficiency
+func (db *ElasticsearchDB) FormatPayloadWithBuffer(logs []LogEntry, buf *bytes.Buffer) (string, string) {
+	buf.Reset() // Clear the buffer
+	return db.formatPayloadInternal(logs, buf)
+}
+
+// formatPayloadInternal contains the shared formatting logic with optimized JSON encoding
+func (db *ElasticsearchDB) formatPayloadInternal(logs []LogEntry, buf *bytes.Buffer) (string, string) {
 	currentIndex := db.getCurrentIndex()
+
+	// Create optimized JSON encoder for streaming NDJSON
+	encoder := json.NewEncoder(buf)
+	encoder.SetEscapeHTML(false) // Disable HTML escaping for performance
+
+	// Pre-create metadata once (optimization #4: avoid repeated marshaling)
+	meta := map[string]interface{}{
+		"index": map[string]interface{}{
+			"_index": currentIndex,
+		},
+	}
 
 	// For Elasticsearch Bulk API, each request consists of two lines:
 	// 1. Operation metadata (create, index, update, delete)
 	// 2. Document data
-	for _, log := range logs {
+	for _, originalLog := range logs {
+		// Create a copy to avoid modifying the original (thread safety improvement)
+		log := make(LogEntry, len(originalLog))
+		for k, v := range originalLog {
+			log[k] = v
+		}
 		// Ensure timestamp is in correct format
 		var timestampStr string
 		if ts, ok := log["timestamp"]; ok {
@@ -274,29 +289,15 @@ func (db *ElasticsearchDB) FormatPayload(logs []LogEntry) (string, string) {
 			}
 		}
 
-		// Metadata - operation index in specified index
-		meta := map[string]interface{}{
-			"index": map[string]interface{}{
-				"_index": currentIndex,
-			},
-		}
-
-		metaJSON, err := json.Marshal(meta)
-		if err != nil {
+		// Encode metadata line using streaming encoder (optimization #3: no intermediate []byte)
+		if err := encoder.Encode(meta); err != nil {
 			continue
 		}
 
-		buf.Write(metaJSON)
-		buf.WriteString("\n")
-
-		// Document data
-		docJSON, err := json.Marshal(log)
-		if err != nil {
+		// Encode document line using streaming encoder (optimization #3: no intermediate []byte)
+		if err := encoder.Encode(log); err != nil {
 			continue
 		}
-
-		buf.Write(docJSON)
-		buf.WriteString("\n")
 	}
 
 	// For Elasticsearch Bulk API, use content-type application/x-ndjson
@@ -343,13 +344,16 @@ func (db *ElasticsearchDB) SendLogs(logs []LogEntry) error {
 		// Update metrics
 		db.UpdateMetric("request_duration", requestEnd.Sub(requestStart).Seconds())
 
+		// CRITICAL: Close response body even on error to prevent memory leaks
+		if resp != nil && resp.Body != nil {
+			defer resp.Body.Close()
+		}
+
 		if err != nil {
 			lastErr = err
 			db.IncrementMetric("failed_requests", 1)
 			continue
 		}
-
-		defer resp.Body.Close()
 
 		// Check response status
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -367,6 +371,81 @@ func (db *ElasticsearchDB) SendLogs(logs []LogEntry) error {
 		// If server error (5xx), retry
 		// For client errors (4xx), no need to retry
 		if resp.StatusCode < 500 {
+			return lastErr
+		}
+	}
+
+	return lastErr
+}
+
+// SendLogsWithBuffer sends logs using buffer pool for better performance
+func (db *ElasticsearchDB) SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer) error {
+	if len(logs) == 0 {
+		return nil
+	}
+
+	payload, contentType := db.FormatPayloadWithBuffer(logs, buf)
+
+	var lastErr error
+
+	// Retry sending with exponential backoff on errors
+	for attempt := 0; attempt <= db.RetryCount; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff before retrying
+			backoff := db.RetryDelay * time.Duration(1<<uint(attempt-1))
+			if db.Verbose {
+				fmt.Printf("Elasticsearch: Retrying %d/%d after error: %v (backoff: %v)\n",
+					attempt, db.RetryCount, lastErr, backoff)
+			}
+			time.Sleep(backoff)
+		}
+
+		// Create request
+		req, err := http.NewRequest("POST", db.URL+"/_bulk", strings.NewReader(payload))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create request: %w", err)
+			continue
+		}
+
+		req.Header.Set("Content-Type", contentType)
+
+		// Execute request using the shared HTTP client (NOT creating new client every time)
+		resp, err := db.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			continue
+		}
+
+		// CRITICAL: Close response body even on error to prevent memory leaks
+		if resp != nil && resp.Body != nil {
+			defer resp.Body.Close()
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			// Read error response for debugging
+			body, _ := io.ReadAll(resp.Body)
+			lastErr = fmt.Errorf("elasticsearch returned error status %d: %s", resp.StatusCode, string(body))
+
+			if db.Verbose {
+				fmt.Printf("Elasticsearch: Error response: %s\n", string(body))
+			}
+
+			// If server error (5xx), retry
+			// For client errors (4xx), no need to retry
+			if resp.StatusCode < 500 {
+				return lastErr
+			}
+			continue
+		}
+
+		// Success
+		return nil
+	}
+
+	// If server error (5xx), retry
+	// For client errors (4xx), no need to retry
+	if lastErr != nil {
+		if strings.Contains(lastErr.Error(), "status 4") {
 			return lastErr
 		}
 	}

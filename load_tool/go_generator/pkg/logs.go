@@ -3,12 +3,8 @@ package pkg
 import (
 	"fmt"
 	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
-	"math/rand"
 	"time"
 )
-
-// Global random number generator
-var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // Structures for different log types
 type BaseLog struct {
@@ -100,11 +96,11 @@ func GenerateRandomUserAgent() string {
 }
 
 func GenerateRandomHttpStatus() int {
-	return logdata.HttpStatusCodes[rnd.Intn(len(logdata.HttpStatusCodes))]
+	return logdata.GetRandomHttpStatusCode()
 }
 
 func GenerateRandomHttpMethod() string {
-	return logdata.HttpMethods[rnd.Intn(len(logdata.HttpMethods))]
+	return logdata.GetRandomHttpMethod()
 }
 
 func GenerateRandomPath() string {
@@ -197,10 +193,10 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			RemoteAddr:    GenerateRandomIP(),
 			Request:       fmt.Sprintf("%s %s HTTP/1.1", GenerateRandomHttpMethod(), GenerateRandomPath()),
 			Status:        GenerateRandomHttpStatus(),
-			BytesSent:     rnd.Intn(10000) + 100,
+			BytesSent:     logdata.RandomIntn(10000) + 100,
 			HttpReferer:   fmt.Sprintf("https://%s.example.com%s", GenerateRandomService(), GenerateRandomPath()),
 			HttpUserAgent: GenerateRandomUserAgent(),
-			RequestTime:   float64(rnd.Intn(1000)) / 1000.0,
+			RequestTime:   logdata.RandomFloat64(),
 			Message:       fmt.Sprintf("%s %s - %d", GenerateRandomHttpMethod(), GenerateRandomPath(), GenerateRandomHttpStatus()),
 		}
 
@@ -209,22 +205,22 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			BaseLog:     baseLog,
 			Level:       GenerateRandomLogLevel(),
 			Message:     GenerateRandomErrorMessage(),
-			ErrorCode:   rnd.Intn(100) + 400,
+			ErrorCode:   logdata.RandomIntn(100) + 400,
 			Service:     GenerateRandomService(),
 			Exception:   GenerateRandomException(),
 			Stacktrace:  GenerateRandomStackTrace(GenerateRandomException()),
 			RequestID:   GenerateRandomRequestID(),
 			RequestPath: GenerateRandomPath(),
 			ClientIP:    GenerateRandomIP(),
-			Duration:    float64(rnd.Intn(10000)) / 1000.0,
-			RetryCount:  rnd.Intn(5),
+			Duration:    logdata.RandomFloat64() * 10.0,
+			RetryCount:  logdata.RandomIntn(5),
 			Tags:        GenerateRandomTags(),
 			Context:     GenerateRandomErrorContext(),
 		}
 
 	case "application":
 		var exception, stacktrace string
-		if rnd.Intn(10) < 2 { // 20% chance of having exception
+		if logdata.RandomIntn(10) < 2 { // 20% chance of having exception
 			exception = GenerateRandomException()
 			stacktrace = GenerateRandomStackTrace(exception)
 		}
@@ -240,26 +236,26 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			RequestPath:    GenerateRandomPath(),
 			RequestParams:  GenerateRandomErrorContext(),
 			ResponseStatus: GenerateRandomHttpStatus(),
-			ResponseTime:   float64(rnd.Intn(500)) / 1000.0,
+			ResponseTime:   logdata.RandomFloat64() * 0.5,
 			Exception:      exception,
 			Stacktrace:     stacktrace,
-			UserID:         fmt.Sprintf("user-%d", rnd.Intn(10000)),
+			UserID:         fmt.Sprintf("user-%d", logdata.RandomIntn(10000)),
 			SessionID:      GenerateRandomRequestID(),
 			Dependencies:   GenerateRandomDependencies(),
-			Memory:         float64(rnd.Intn(1024*100)) / 100.0,
-			CPU:            float64(rnd.Intn(100*100)) / 100.0,
+			Memory:         logdata.RandomFloat64() * 1024.0,
+			CPU:            logdata.RandomFloat64() * 100.0,
 		}
 
 	case "metric":
 		metrics := logdata.MetricNames
 		values := []float64{
-			float64(rnd.Intn(100*100)) / 100.0,
-			float64(rnd.Intn(1024*100)) / 100.0,
-			float64(rnd.Intn(10000)) / 100.0,
+			logdata.RandomFloat64() * 100.0,
+			logdata.RandomFloat64() * 1024.0,
+			logdata.RandomFloat64() * 100.0,
 		}
 
-		randomMetric := metrics[rnd.Intn(len(metrics))]
-		randomValue := values[rnd.Intn(len(values))]
+		randomMetric := metrics[logdata.RandomIntn(len(metrics))]
+		randomValue := values[logdata.RandomIntn(len(values))]
 
 		return MetricLog{
 			BaseLog:    baseLog,
@@ -276,8 +272,8 @@ func GenerateLog(logType string, timestamp string) interface{} {
 			BaseLog:    baseLog,
 			EventType:  eventType,
 			Message:    fmt.Sprintf("Event: %s occurred at %s", eventType, timestamp),
-			ResourceID: fmt.Sprintf("resource-%d", rnd.Intn(1000)),
-			Namespace:  fmt.Sprintf("namespace-%d", rnd.Intn(10)),
+			ResourceID: fmt.Sprintf("resource-%d", logdata.RandomIntn(1000)),
+			Namespace:  fmt.Sprintf("namespace-%d", logdata.RandomIntn(10)),
 			Service:    GenerateRandomService(),
 		}
 

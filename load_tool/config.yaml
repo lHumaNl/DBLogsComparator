@@ -1,4 +1,16 @@
 metrics: true
+verbose: false
+debug: false
+
+combined:
+    maxPerf:
+        steps: 2
+        stepDuration: 13
+        impact: 4
+
+    stability:
+        stepDuration: 60
+        impact: 3
 
 generator:
   maxPerf:
@@ -10,17 +22,17 @@ generator:
     incrementPercent: 10
 
   stability:
-    stepDuration: 60
+    stepDuration: 10
     impact: 5
-    baseRPS: 10
+    baseRPS: 3
     stepPercent: 100
 
-  bulkSize: 10
+  bulkSize: 2
   maxRetries: 3
   retryDelayMs: 500
   timeoutMs: 5000
 
-  verbose: false
+  #verbose: false
 
   distribution:
     web_access: 60
@@ -39,16 +51,14 @@ querier:
     incrementPercent: 10
 
   stability:
-    stepDuration: 60
+    stepDuration: 20
     impact: 5
-    baseRPS: 10
+    baseRPS: 4
     stepPercent: 100
 
-  maxRetries: 3
-  retryDelayMs: 500
   timeoutMs: 30000
 
-  verbose: false
+  #verbose: false
 
   distribution:
     simple: 20
@@ -59,28 +69,39 @@ querier:
     topk: 15
 
   times:
-    last5m: 10
-    last15m: 10
+    last5m: 15
+    last15m: 12
     last30m: 10
     last1h: 10
     last2h: 10
     last4h: 10
     last8h: 10
     last12h: 5
-    last24h: 2.5
-    last48h: 1.5
-    last72h: 1
+    last24h: 2
+    last48h: 1
+#    custom_period:
+#      percent: 5
+#      period_start: 01.01.2025 12:00:00
+#      period_end: 02.01.2025 12:00:00
+#      times:
+#        15m: 10
+#        30m: 10
+#        1h: 10
+#        2h: 10
+#        4h: 10
+#        8h: 10
+#        12h: 5
     custom:
+      percent: 15
       percents_offset_left_border:
-        15m: 10
-        30m: 10
-        1h: 10
-        2h: 10
+        15m: 20
+        30m: 20
+        1h: 17.5
+        2h: 15
         4h: 10
         8h: 10
         12h: 5
         24h: 2.5
-        48h: 1.5
       percents_offset_right_border:
         1h: 50
         2h: 30

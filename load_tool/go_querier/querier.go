@@ -6,13 +6,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"math/rand"
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -72,7 +73,7 @@ type Options struct {
 type QueryConfig struct {
 	Mode            string
 	BaseURL         string
-	QPS             int
+	QPS             float64
 	DurationSeconds int
 	// WorkerCount removed - using runtime.NumCPU() * 4
 	QueryTypeDistribution map[models.QueryType]int
@@ -136,87 +137,80 @@ func CreateQueryExecutorWithTimeConfig(mode, baseURL string, options models.Opti
 
 // RunQuerier starts the query module with asynchronous processing
 func RunQuerier(config QueryConfig, executor models.QueryExecutor, stats *common.Stats) error {
-	return RunQuerierWithContext(context.Background(), config, executor, stats)
+	return RunQuerierWithContext(context.Background(), config, executor, stats, nil, 0, 0)
+}
+
+// RunQuerierWithStatsLogger starts the query module with StatsLogger support
+func RunQuerierWithStatsLogger(config QueryConfig, executor models.QueryExecutor, stats *common.Stats,
+	statsLogger *common.StatsLogger, step, totalSteps int) error {
+	return RunQuerierWithContext(context.Background(), config, executor, stats, statsLogger, step, totalSteps)
 }
 
 // RunQuerierWithContext starts the query module with context support for graceful shutdown
-func RunQuerierWithContext(ctx context.Context, config QueryConfig, executor models.QueryExecutor, stats *common.Stats) error {
+func RunQuerierWithContext(ctx context.Context, config QueryConfig, executor models.QueryExecutor, stats *common.Stats,
+	statsLogger *common.StatsLogger, step, totalSteps int) error {
+	// Record test start time
+	testStartTime := time.Now()
+
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Channels for async operation with backpressure protection
-	queryChan := make(chan struct{}, config.QPS*10) // Large buffer to prevent blocking
-	stopChan := make(chan struct{})
-	var wg sync.WaitGroup
+	// No longer using async channels - synchronous execution for precise RPS timing
 
-	// Calculate number of async processors based on CPU cores
-	numProcessors := runtime.NumCPU() * 4
+	// Start periodic statistics reporter
+	var statsWg sync.WaitGroup
+	statsWg.Add(1)
+	go func() {
+		defer statsWg.Done()
+		statsReporter(ctx, stats, executor.GetSystemName(), config.QPS, testStartTime, config.Verbose)
+	}()
+
 	if config.Verbose {
-		fmt.Printf("Starting %d async query processors (CPU cores: %d)\n", numProcessors, runtime.NumCPU())
+		fmt.Printf("Using synchronous query execution to maintain precise RPS timing\n")
 	}
 
-	// Start async query processors
-	for i := 0; i < numProcessors; i++ {
-		wg.Add(1)
-		go func(processorID int) {
-			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					if config.Verbose {
-						fmt.Printf("Query processor %d stopping due to context cancellation\n", processorID)
-					}
-					return
-				case <-queryChan:
-					// Process query asynchronously with retry logic
-					processQuery(processorID, stats, config, executor)
-				}
-			}
-		}(i)
-	}
-
-	// QPS ticker - sends queries at specified rate without waiting for responses
-	tickInterval := time.Second / time.Duration(config.QPS)
-	ticker := time.NewTicker(tickInterval)
-	defer ticker.Stop()
+	// QPS timing loop - more CPU efficient than ticker
+	targetIntervalNs := float64(time.Second) / config.QPS
+	targetInterval := time.Duration(targetIntervalNs)
 
 	endTime := time.Now().Add(config.Duration())
-	backpressureCount := int64(0)
+
+	if config.Verbose {
+		fmt.Printf("Starting QPS loop with target interval: %v (%.2f QPS)\n", targetInterval, config.QPS)
+	}
 
 	for time.Now().Before(endTime) {
+		iterationStart := time.Now()
+
 		select {
 		case <-ctx.Done():
 			if config.Verbose {
 				fmt.Printf("\nQuerier stopping due to context cancellation\n")
 			}
 			goto cleanup
-		case <-ticker.C:
-			// Non-blocking send to prevent QPS degradation
-			select {
-			case queryChan <- struct{}{}:
-				// Query queued successfully
-			default:
-				// Query channel full - apply backpressure
-				backpressureCount++
-				if config.Verbose && backpressureCount%100 == 0 {
-					fmt.Printf("\nWarning: Query backpressure applied %d times - system overloaded\n", backpressureCount)
-				}
-				stats.IncrementFailedQueries()
-			}
+		default:
+			// Execute query synchronously to maintain precise RPS timing
+			processQuery(0, stats, config, executor)
+		}
+
+		// Smart sleep - only sleep remaining time if needed
+		elapsed := time.Since(iterationStart)
+		if elapsed < targetInterval {
+			sleepDuration := targetInterval - elapsed
+			time.Sleep(sleepDuration)
 		}
 	}
 
 cleanup:
 	// Graceful shutdown
-	close(queryChan)
-	cancel() // Cancel context to stop all processors
-	wg.Wait()
-	close(stopChan)
+	cancel() // Cancel context to stop stats reporter
 
-	if config.Verbose && backpressureCount > 0 {
-		fmt.Printf("Query backpressure events: %d\n", backpressureCount)
-	}
+	// Wait for stats reporter to finish
+	statsWg.Wait()
+
+	// Print final statistics with StatsLogger support
+	printFinalQueryStatisticsWithLogger(stats, testStartTime, executor.GetSystemName(), config.QPS, statsLogger, step, totalSteps)
 
 	return nil
 }
@@ -237,10 +231,6 @@ func processQuery(processorID int, stats *common.Stats, config QueryConfig, exec
 	if timeStringRepr == "" {
 		timeStringRepr = "unknown"
 	}
-
-	// Generate query beforehand to have it for error logging
-	generatedQuery := executor.GenerateRandomQuery(queryType)
-	queryString := fmt.Sprintf("%v", generatedQuery)
 
 	// Increment the total query counter
 	stats.IncrementTotalQueries()
@@ -275,8 +265,8 @@ func processQuery(processorID int, stats *common.Stats, config QueryConfig, exec
 
 		// Update Prometheus metrics
 		normalizedSystem := common.NormalizeSystemName(executor.GetSystemName())
-		common.ResultHitsHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.HitCount))
-		common.ResultSizeHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.BytesRead))
+		common.ResultHitsSummary.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.HitCount))
+		common.ResultSizeSummary.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.BytesRead))
 
 		// Output query information if verbose mode is enabled
 		if config.Verbose {
@@ -320,17 +310,9 @@ func processQuery(processorID int, stats *common.Stats, config QueryConfig, exec
 	}
 	common.ObserveReadDurationWithTimeAndType(executor.GetSystemName(), "failed", finalTimeStringRepr, string(queryType), duration.Seconds())
 
-	if config.Verbose {
-		fmt.Printf("Processor %d: Query failed for %s: %v\n", processorID, queryType, err)
-	}
-
 	// Log error using structured logging with query string
 	// Use generated query string or result query string if available
-	finalQueryString := queryString
-	if result.QueryString != "" {
-		finalQueryString = result.QueryString
-	}
-	common.LogQueryError(processorID, string(queryType), executor.GetSystemName(), err, finalQueryString)
+	common.LogQueryError(processorID, string(queryType), executor.GetSystemName(), err, result.QueryString)
 }
 
 // runWorker starts a worker goroutine
@@ -384,41 +366,6 @@ func runWorker(worker Worker) {
 				finalTimeStringRepr = result.TimeStringRepr
 			}
 			common.ObserveReadDurationWithTimeAndType(worker.Executor.GetSystemName(), "failed", finalTimeStringRepr, string(queryType), duration.Seconds())
-
-			// If the error is not related to timeout or context, retry the query
-			if err != context.DeadlineExceeded && err != context.Canceled {
-				for i := 0; i < worker.Config.MaxRetries; i++ {
-					worker.Stats.IncrementRetriedQueries()
-					common.IncrementReadRequests(worker.Executor.GetSystemName())
-
-					time.Sleep(worker.Config.RetryDelay())
-
-					// Create a new context for the retry
-					retryCtx, retryCancel := context.WithTimeout(ctx, worker.Config.QueryTimeout)
-
-					// Retry the query
-					retryStartTime := time.Now()
-					result, err = worker.Executor.ExecuteQuery(retryCtx, queryType)
-					retryDuration := time.Since(retryStartTime)
-
-					// Cancel the context
-					retryCancel()
-
-					// Update metrics with time and type information
-					// Use timeStringRepr generated beforehand, fallback to result if available
-					retryFinalTimeStringRepr := timeStringRepr
-					if result.TimeStringRepr != "" {
-						retryFinalTimeStringRepr = result.TimeStringRepr
-					}
-
-					if err == nil {
-						common.ObserveReadDurationWithTimeAndType(worker.Executor.GetSystemName(), "success", retryFinalTimeStringRepr, string(queryType), retryDuration.Seconds())
-						break
-					} else {
-						common.ObserveReadDurationWithTimeAndType(worker.Executor.GetSystemName(), "failed", retryFinalTimeStringRepr, string(queryType), retryDuration.Seconds())
-					}
-				}
-			}
 		}
 
 		// If the query is ultimately successful, update counters
@@ -440,8 +387,8 @@ func runWorker(worker Worker) {
 
 			// Update Prometheus metrics
 			normalizedSystem := common.NormalizeSystemName(worker.Executor.GetSystemName())
-			common.ResultHitsHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.HitCount))
-			common.ResultSizeHistogram.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.BytesRead))
+			common.ResultHitsSummary.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.HitCount))
+			common.ResultSizeSummary.WithLabelValues(normalizedSystem, string(queryType)).Observe(float64(result.BytesRead))
 
 			// Output query information if verbose mode is enabled
 			if worker.Config.Verbose {
@@ -471,7 +418,11 @@ func runWorker(worker Worker) {
 			}
 		} else {
 			// Always log errors for diagnostics using structured logging
-			common.LogQueryError(worker.ID, string(queryType), worker.Executor.GetSystemName(), err, "")
+			queryString := result.QueryString
+			if queryString == "" {
+				queryString = "query_generation_failed"
+			}
+			common.LogQueryError(worker.ID, string(queryType), worker.Executor.GetSystemName(), err, queryString)
 		}
 	}
 }
@@ -507,7 +458,7 @@ func selectRandomQueryType(distribution map[models.QueryType]int) models.QueryTy
 
 // randInt returns a random number in the range [min, max)
 func randInt(min, max int) int {
-	return min + rand.Intn(max-min)
+	return min + logdata.RandomIntn(max-min)
 }
 
 func init() {
@@ -739,4 +690,109 @@ func parseNanosecondTime(timeStr string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("failed to parse timestamp: %v", err)
 	}
 	return time.Unix(0, ns), nil
+}
+
+// statsReporter periodically reports query statistics during execution
+func statsReporter(ctx context.Context, stats *common.Stats, systemName string, targetQPS float64, startTime time.Time, verbose bool) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var lastTotalQueries, lastSuccessful, lastFailed int64
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			currentTotal := atomic.LoadInt64(&stats.TotalQueries)
+			currentSuccessful := atomic.LoadInt64(&stats.SuccessfulQueries)
+			currentFailed := atomic.LoadInt64(&stats.FailedQueries)
+
+			// Calculate deltas for the last 5 seconds
+			deltaTotal := currentTotal - lastTotalQueries
+			deltaSuccessful := currentSuccessful - lastSuccessful
+			deltaFailed := currentFailed - lastFailed
+
+			actualQPS := float64(deltaTotal) / 5.0 // 5 second intervals
+			elapsed := time.Since(startTime).Seconds()
+
+			if verbose && deltaTotal > 0 {
+				fmt.Printf("[%s] %.0fs: %d queries (%.1f QPS, target: %.1f), success: %d, failed: %d\n",
+					systemName, elapsed, deltaTotal, actualQPS, targetQPS, deltaSuccessful, deltaFailed)
+			}
+
+			// Update last values
+			lastTotalQueries = currentTotal
+			lastSuccessful = currentSuccessful
+			lastFailed = currentFailed
+		}
+	}
+}
+
+// printFinalQueryStatistics prints comprehensive final statistics for the querier
+func printFinalQueryStatistics(stats *common.Stats, startTime time.Time, systemName string, targetQPS float64) {
+	printFinalQueryStatisticsWithLogger(stats, startTime, systemName, targetQPS, nil, 0, 0)
+}
+
+// printFinalQueryStatisticsWithLogger prints comprehensive final statistics and optionally logs to StatsLogger
+func printFinalQueryStatisticsWithLogger(stats *common.Stats, startTime time.Time, systemName string, targetQPS float64,
+	statsLogger *common.StatsLogger, step, totalSteps int) {
+	elapsed := time.Since(startTime).Seconds()
+
+	totalQueries := atomic.LoadInt64(&stats.TotalQueries)
+	successfulQueries := atomic.LoadInt64(&stats.SuccessfulQueries)
+	failedQueries := atomic.LoadInt64(&stats.FailedQueries)
+	totalHits := atomic.LoadInt64(&stats.TotalHits)
+	totalBytesRead := atomic.LoadInt64(&stats.TotalBytesRead)
+
+	// Calculate rates
+	actualQPS := float64(totalQueries) / elapsed
+	successPercent := 0.0
+	failedPercent := 0.0
+
+	if totalQueries > 0 {
+		successPercent = float64(successfulQueries) / float64(totalQueries) * 100
+		failedPercent = float64(failedQueries) / float64(totalQueries) * 100
+	}
+
+	avgHitsPerQuery := 0.0
+	avgBytesPerQuery := 0.0
+
+	if totalQueries > 0 {
+		avgHitsPerQuery = float64(totalHits) / float64(totalQueries)
+		avgBytesPerQuery = float64(totalBytesRead) / float64(totalQueries) / 1024.0 // KB
+	}
+
+	// Print final statistics in generator-like format
+	fmt.Printf("\n\n=== Query Test Results ===\n")
+	fmt.Printf("System: %s\n", systemName)
+	fmt.Printf("Duration: %.2f seconds\n", elapsed)
+	fmt.Printf("Target QPS: %.2f\n", targetQPS)
+	fmt.Printf("Actual QPS: %.2f\n", actualQPS)
+	fmt.Printf("Total queries: %d (%.2f/s)\n", totalQueries, actualQPS)
+	fmt.Printf("Successful queries: %d (%.2f%%)\n", successfulQueries, successPercent)
+	fmt.Printf("Failed queries: %d (%.2f%%)\n", failedQueries, failedPercent)
+
+	if totalQueries > 0 {
+		fmt.Printf("Total results found: %d documents\n", totalHits)
+		fmt.Printf("Total data read: %.2f MB\n", float64(totalBytesRead)/1024.0/1024.0)
+		fmt.Printf("Average results per query: %.1f documents\n", avgHitsPerQuery)
+		fmt.Printf("Average data per query: %.2f KB\n", avgBytesPerQuery)
+	}
+
+	// Calculate efficiency
+	var efficiency float64 = 100.0
+	if targetQPS > 0 {
+		efficiency = (actualQPS / targetQPS) * 100
+		fmt.Printf("QPS Efficiency: %.1f%% (actual/target)\n", efficiency)
+	}
+
+	fmt.Printf("=== Query Test Completed ===\n\n")
+
+	// Log to StatsLogger if provided
+	if statsLogger != nil && step > 0 && totalSteps > 0 {
+		statsLogger.LogQuerierStats(step, totalSteps, systemName, elapsed,
+			targetQPS, actualQPS, totalQueries, successfulQueries, failedQueries,
+			totalHits, efficiency)
+	}
 }
