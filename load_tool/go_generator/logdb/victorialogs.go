@@ -136,6 +136,11 @@ func (db *VictoriaLogsDB) SendLogs(logs []LogEntry) error {
 
 	payload, contentType := db.FormatPayload(logs)
 
+	// Debug mode: output request body
+	if db.Debug {
+		fmt.Printf("DEBUG [VictoriaLogs Request]: %s\n", payload)
+	}
+
 	var lastErr error
 
 	// Attempt to send with retries on errors
@@ -209,6 +214,11 @@ func (db *VictoriaLogsDB) SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer)
 	}
 
 	payload, contentType := db.FormatPayloadWithBuffer(logs, buf)
+
+	// Debug mode: output request body
+	if db.Debug {
+		fmt.Printf("DEBUG [VictoriaLogs Request]: %s\n", payload)
+	}
 
 	var lastErr error
 

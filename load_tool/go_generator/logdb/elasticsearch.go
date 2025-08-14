@@ -312,6 +312,11 @@ func (db *ElasticsearchDB) SendLogs(logs []LogEntry) error {
 
 	payload, contentType := db.FormatPayload(logs)
 
+	// Debug mode: output request body
+	if db.Debug {
+		fmt.Printf("DEBUG [Elasticsearch Request]: %s\n", payload)
+	}
+
 	var lastErr error
 
 	// Retry sending with exponential backoff on errors
@@ -385,6 +390,11 @@ func (db *ElasticsearchDB) SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer
 	}
 
 	payload, contentType := db.FormatPayloadWithBuffer(logs, buf)
+
+	// Debug mode: output request body
+	if db.Debug {
+		fmt.Printf("DEBUG [Elasticsearch Request]: %s\n", payload)
+	}
 
 	var lastErr error
 

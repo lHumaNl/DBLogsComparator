@@ -532,6 +532,12 @@ func (e *VictoriaLogsExecutor) executeVictoriaLogsQuery(queryInfo map[string]str
 			QueryString: queryInfo["query"],
 		}, fmt.Errorf("failed to read VictoriaLogs response body: %w", err)
 	}
+
+	// Debug mode: output response body
+	if e.Options.Debug {
+		fmt.Printf("DEBUG [VictoriaLogs Response]: %s\n", string(bodyBytes))
+	}
+
 	queryResult := models.QueryResult{BytesRead: int64(len(bodyBytes))}
 
 	if resp.StatusCode != http.StatusOK {

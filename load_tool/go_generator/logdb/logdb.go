@@ -18,7 +18,8 @@ type Options struct {
 	RetryCount      int
 	RetryDelay      time.Duration
 	Verbose         bool
-	ConnectionCount int // Number of HTTP connections for the pool
+	Debug           bool // Debug mode for request body logging
+	ConnectionCount int  // Number of HTTP connections for the pool
 }
 
 // LogDB - interface for all log databases
@@ -58,6 +59,7 @@ type BaseLogDB struct {
 	MetricsData  map[string]float64
 	metricsMutex sync.RWMutex
 	Verbose      bool
+	Debug        bool
 }
 
 // NewBaseLogDB creates a new BaseLogDB instance
@@ -69,6 +71,7 @@ func NewBaseLogDB(url string, options Options) *BaseLogDB {
 		RetryCount:  options.RetryCount,
 		RetryDelay:  options.RetryDelay,
 		Verbose:     options.Verbose,
+		Debug:       options.Debug,
 		MetricsData: make(map[string]float64),
 	}
 }

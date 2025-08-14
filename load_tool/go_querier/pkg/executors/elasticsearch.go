@@ -521,6 +521,11 @@ func (e *ElasticsearchExecutor) executeElasticsearchQuery(ctx context.Context, q
 		}, err
 	}
 
+	// Debug mode: output response body
+	if e.Options.Debug {
+		fmt.Printf("DEBUG [Elasticsearch Response]: %s\n", string(body))
+	}
+
 	// Check for non-200 status
 	if resp.StatusCode != http.StatusOK {
 		// Check if it's an "index_not_found" error, which is common and can be handled gracefully

@@ -368,6 +368,7 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 		RetryCount:      generatorConfig.MaxRetries,
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
+		Debug:           cfg.Generator.IsDebug(cfg.Debug),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -405,6 +406,7 @@ func runGeneratorWithContextConfigAndRPSAndStatsLogger(ctx context.Context, cfg 
 		RetryCount:      generatorConfig.MaxRetries,
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
+		Debug:           cfg.Generator.IsDebug(cfg.Debug),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -449,6 +451,7 @@ func runGeneratorWithContextConfigAndRPS(ctx context.Context, cfg *common.Config
 		RetryCount:      generatorConfig.MaxRetries,
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
+		Debug:           cfg.Generator.IsDebug(cfg.Debug),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -492,6 +495,7 @@ func runGeneratorWithContextConfig(ctx context.Context, cfg *common.Config, stat
 		RetryCount:      generatorConfig.MaxRetries,
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
+		Debug:           cfg.Generator.IsDebug(cfg.Debug),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -879,6 +883,7 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 		RetryCount:      config.Querier.MaxRetries,
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
+		Debug:           config.Querier.IsDebug(config.Debug),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
@@ -947,6 +952,7 @@ func runQuerierWithConfigAndRPS(config *common.Config, stats *common.Stats, rps 
 		RetryCount:      config.Querier.MaxRetries,
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
+		Debug:           config.Querier.IsDebug(config.Debug),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
@@ -1012,6 +1018,7 @@ func runQuerierWithConfigAndRPSAndContextAndStatsLogger(ctx context.Context, con
 		RetryCount:      config.Querier.MaxRetries,
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
+		Debug:           config.Querier.IsDebug(config.Debug),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
@@ -1076,6 +1083,7 @@ func runQuerierWithConfigAndRPSAndContext(ctx context.Context, config *common.Co
 		RetryCount:      config.Querier.MaxRetries,
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
+		Debug:           config.Querier.IsDebug(config.Debug),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 

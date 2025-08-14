@@ -769,6 +769,11 @@ func (e *LokiExecutor) executeLokiQuery(queryInfo map[string]string) (models.Que
 		return models.QueryResult{}, fmt.Errorf("error reading response body: %v", err)
 	}
 
+	// Debug mode: output response body
+	if e.Options.Debug {
+		fmt.Printf("DEBUG [Loki Response]: %s\n", string(bodyBytes))
+	}
+
 	// Check if the response status code is not 2xx
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Return error with HTTP status code and response body, but include query string for logging

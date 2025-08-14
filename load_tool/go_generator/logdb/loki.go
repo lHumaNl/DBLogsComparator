@@ -223,6 +223,11 @@ func (db *LokiDB) SendLogs(logs []LogEntry) error {
 
 	payload, contentType := db.FormatPayload(logs)
 
+	// Debug mode: output request body
+	if db.Debug {
+		fmt.Printf("DEBUG [Loki Request]: %s\n", payload)
+	}
+
 	var lastErr error
 
 	// Retry attempts for sending with error handling
@@ -296,6 +301,11 @@ func (db *LokiDB) SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer) error {
 	}
 
 	payload, contentType := db.FormatPayloadWithBuffer(logs, buf)
+
+	// Debug mode: output request body
+	if db.Debug {
+		fmt.Printf("DEBUG [Loki Request]: %s\n", payload)
+	}
 
 	var lastErr error
 

@@ -466,7 +466,7 @@ func init() {
 }
 
 // createExecutor creates a new query executor for the specified system
-func createExecutor(system, host string, port int, timeout time.Duration, retryCount int, verbose bool, workerID int) (models.QueryExecutor, error) {
+func createExecutor(system, host string, port int, timeout time.Duration, retryCount int, verbose, debug bool, workerID int) (models.QueryExecutor, error) {
 	baseURL := fmt.Sprintf("http://%s:%d", host, port)
 
 	options := models.Options{
@@ -474,6 +474,7 @@ func createExecutor(system, host string, port int, timeout time.Duration, retryC
 		RetryCount: retryCount,
 		RetryDelay: 500 * time.Millisecond,
 		Verbose:    verbose,
+		Debug:      debug,
 	}
 
 	switch strings.ToLower(system) {
@@ -501,6 +502,7 @@ func main() {
 	logLevel := flag.String("log-level", "", "Log level (debug, info, warn, error, fatal, panic)")
 	logFormat := flag.String("log-format", "", "Log format (text, json)")
 	verbose := flag.Bool("verbose", false, "Verbose output")
+	debug := flag.Bool("debug", false, "Debug mode - output response body")
 	queryType := flag.String("query-type", "", "Query type to use (simple, complex, analytical, timeseries, stat, topk). If empty, use all types.")
 
 	flag.Parse()
@@ -535,7 +537,7 @@ func main() {
 	}
 
 	// Create the executor
-	executor, err := createExecutor(*system, *serverHost, *serverPort, time.Duration(*timeoutMs)*time.Millisecond, *retryCount, *verbose, 1)
+	executor, err := createExecutor(*system, *serverHost, *serverPort, time.Duration(*timeoutMs)*time.Millisecond, *retryCount, *verbose, *debug, 1)
 	if err != nil {
 		logger.Fatalf("Failed to create executor: %v", err)
 	}
