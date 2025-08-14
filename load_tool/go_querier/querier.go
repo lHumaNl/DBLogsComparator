@@ -156,7 +156,10 @@ func RunQuerierWithContext(ctx context.Context, config QueryConfig, executor mod
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// No longer using async channels - synchronous execution for precise RPS timing
+	// Using asynchronous execution for precise RPS timing
+
+	// WaitGroup for tracking query goroutines
+	var queryWg sync.WaitGroup
 
 	// Start periodic statistics reporter
 	var statsWg sync.WaitGroup
@@ -167,7 +170,7 @@ func RunQuerierWithContext(ctx context.Context, config QueryConfig, executor mod
 	}()
 
 	if config.Verbose {
-		fmt.Printf("Using synchronous query execution to maintain precise RPS timing\n")
+		fmt.Printf("Using asynchronous query execution to maintain precise RPS timing\n")
 	}
 
 	// QPS timing loop - more CPU efficient than ticker
@@ -190,8 +193,12 @@ func RunQuerierWithContext(ctx context.Context, config QueryConfig, executor mod
 			}
 			goto cleanup
 		default:
-			// Execute query synchronously to maintain precise RPS timing
-			processQuery(0, stats, config, executor)
+			// Execute query asynchronously to maintain precise RPS timing
+			queryWg.Add(1)
+			go func() {
+				defer queryWg.Done()
+				processQuery(0, stats, config, executor)
+			}()
 		}
 
 		// Smart sleep - only sleep remaining time if needed
@@ -205,6 +212,12 @@ func RunQuerierWithContext(ctx context.Context, config QueryConfig, executor mod
 cleanup:
 	// Graceful shutdown
 	cancel() // Cancel context to stop stats reporter
+
+	// Wait for all query goroutines to finish
+	if config.Verbose {
+		fmt.Printf("Waiting for query goroutines to finish...\n")
+	}
+	queryWg.Wait()
 
 	// Wait for stats reporter to finish
 	statsWg.Wait()
