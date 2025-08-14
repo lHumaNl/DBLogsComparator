@@ -235,24 +235,49 @@ func (e *ElasticsearchExecutor) generateSimpleQuery(baseQuery map[string]interfa
 		})
 	} else {
 		// Handle regular field searches - only positive operators now
-		queryType := "term" // default
+		fieldType, fieldExists := logdata.FieldTypeMap[params.Field]
 
-		// Use appropriate Elasticsearch query type based on operator and regex
-		if params.IsRegex || params.Operator == "=~" {
-			queryType = "regexp"
-		}
+		// Check if this is a regex query on an integer field
+		if (params.IsRegex || params.Operator == "=~") && fieldExists && fieldType == logdata.IntField {
+			// Convert regex pattern to range query for integer fields
+			if regexStr, ok := params.Value.(string); ok {
+				rangeCondition := e.convertRegexToRange(params.Field, regexStr)
+				filter := map[string]interface{}{
+					"range": map[string]interface{}{
+						params.Field: rangeCondition,
+					},
+				}
+				filters = append(filters, filter)
+			} else {
+				// Fallback to exact term if conversion fails
+				filter := map[string]interface{}{
+					"term": map[string]interface{}{
+						params.Field: params.Value,
+					},
+				}
+				filters = append(filters, filter)
+			}
+		} else {
+			// Handle string fields and exact matches
+			queryType := "term" // default
 
-		// Prepare field for Elasticsearch (add .keyword for string fields)
-		esField := params.Field
-		if fieldType, exists := logdata.FieldTypeMap[params.Field]; exists && fieldType == logdata.StringField {
-			esField += ".keyword"
-		}
+			// Use regexp for string fields with regex
+			if params.IsRegex || params.Operator == "=~" {
+				queryType = "regexp"
+			}
 
-		filter := map[string]interface{}{}
-		filter[queryType] = map[string]interface{}{
-			esField: params.Value,
+			// Prepare field for Elasticsearch (add .keyword for string fields)
+			esField := params.Field
+			if fieldExists && fieldType == logdata.StringField {
+				esField += ".keyword"
+			}
+
+			filter := map[string]interface{}{}
+			filter[queryType] = map[string]interface{}{
+				esField: params.Value,
+			}
+			filters = append(filters, filter)
 		}
-		filters = append(filters, filter)
 	}
 
 	// Update the filters in the base query
@@ -326,23 +351,46 @@ func (e *ElasticsearchExecutor) generateComplexQuery(baseQuery map[string]interf
 			}
 		} else {
 			// Handle regular field searches
-			queryType := "term" // default
+			fieldType, fieldExists := logdata.FieldTypeMap[field]
 
-			// Use appropriate Elasticsearch query type based on operator and regex
-			if isRegex || operator == "=~" || operator == "!~" {
-				queryType = "regexp"
-			}
+			// Check if this is a regex query on an integer field
+			if (isRegex || operator == "=~" || operator == "!~") && fieldExists && fieldType == logdata.IntField {
+				// Convert regex pattern to range query for integer fields
+				if regexStr, ok := value.(string); ok {
+					rangeCondition := e.convertRegexToRange(field, regexStr)
+					filter = map[string]interface{}{
+						"range": map[string]interface{}{
+							field: rangeCondition,
+						},
+					}
+				} else {
+					// Fallback to exact term if conversion fails
+					filter = map[string]interface{}{
+						"term": map[string]interface{}{
+							field: value,
+						},
+					}
+				}
+			} else {
+				// Handle string fields and exact matches
+				queryType := "term" // default
 
-			// Prepare field for Elasticsearch (add .keyword for string fields)
-			esField := field
-			if fieldType, exists := logdata.FieldTypeMap[field]; exists && fieldType == logdata.StringField {
-				esField += ".keyword"
-			}
+				// Use regexp for string fields with regex
+				if isRegex || operator == "=~" || operator == "!~" {
+					queryType = "regexp"
+				}
 
-			filter = map[string]interface{}{
-				queryType: map[string]interface{}{
-					esField: value,
-				},
+				// Prepare field for Elasticsearch (add .keyword for string fields)
+				esField := field
+				if fieldExists && fieldType == logdata.StringField {
+					esField += ".keyword"
+				}
+
+				filter = map[string]interface{}{
+					queryType: map[string]interface{}{
+						esField: value,
+					},
+				}
 			}
 		}
 
@@ -1035,15 +1083,38 @@ func (e *ElasticsearchExecutor) generateTopKQuery(baseQuery map[string]interface
 	if params.HasBaseFilter {
 		// Prepare filter field for Elasticsearch
 		esFilterField := params.FilterField
-		if fieldType, exists := logdata.FieldTypeMap[params.FilterField]; exists && fieldType == logdata.StringField {
+		filterFieldType, filterFieldExists := logdata.FieldTypeMap[params.FilterField]
+		if filterFieldExists && filterFieldType == logdata.StringField {
 			esFilterField += ".keyword"
 		}
 
-		// Create filter using unified field selection approach
-		termFilter := map[string]interface{}{
-			"term": map[string]interface{}{
-				esFilterField: params.FilterValue,
-			},
+		// Check if this is a regex pattern on integer field (same logic as other query types)
+		var termFilter map[string]interface{}
+		if filterFieldExists && filterFieldType == logdata.IntField {
+			// Check if FilterValue looks like a regex pattern
+			if regexStr, ok := params.FilterValue.(string); ok && (regexStr == "50[0-9]" || regexStr == "40[0-9]" || regexStr == "2[0-9][0-9]" || regexStr == "4[0-9][0-9]" || regexStr == "5[0-9][0-9]" || regexStr == "[4-5]0[0-9]") {
+				// Convert regex to range query
+				rangeCondition := e.convertRegexToRange(params.FilterField, regexStr)
+				termFilter = map[string]interface{}{
+					"range": map[string]interface{}{
+						params.FilterField: rangeCondition,
+					},
+				}
+			} else {
+				// Use exact term for non-regex integer values
+				termFilter = map[string]interface{}{
+					"term": map[string]interface{}{
+						params.FilterField: params.FilterValue,
+					},
+				}
+			}
+		} else {
+			// Use term filter for string fields and exact matches
+			termFilter = map[string]interface{}{
+				"term": map[string]interface{}{
+					esFilterField: params.FilterValue,
+				},
+			}
 		}
 		filters = append(filters, termFilter)
 	}
@@ -1068,6 +1139,43 @@ func (e *ElasticsearchExecutor) generateTopKQuery(baseQuery map[string]interface
 	baseQuery["query"].(map[string]interface{})["bool"].(map[string]interface{})["filter"] = filters
 
 	return baseQuery
+}
+
+// convertRegexToRange converts regex patterns for integer fields to Elasticsearch range queries
+func (e *ElasticsearchExecutor) convertRegexToRange(field string, regexPattern string) map[string]interface{} {
+	switch regexPattern {
+	// HTTP status code patterns
+	case "2[0-9][0-9]":
+		return map[string]interface{}{"gte": 200, "lt": 300}
+	case "4[0-9][0-9]":
+		return map[string]interface{}{"gte": 400, "lt": 500}
+	case "5[0-9][0-9]":
+		return map[string]interface{}{"gte": 500, "lt": 600}
+	case "20[0-9]":
+		return map[string]interface{}{"gte": 200, "lte": 209}
+	case "40[0-9]":
+		return map[string]interface{}{"gte": 400, "lte": 409}
+	case "50[0-9]":
+		return map[string]interface{}{"gte": 500, "lte": 509}
+
+	// Error code patterns
+	case "[4-5]0[0-9]":
+		return map[string]interface{}{"gte": 400, "lte": 509}
+
+	// Generic number patterns
+	case "[0-9]+":
+		return map[string]interface{}{"gte": 0, "lt": 1000}
+	case "1[0-9]+":
+		return map[string]interface{}{"gte": 10, "lt": 200}
+	case "[1-9][0-9]*":
+		return map[string]interface{}{"gte": 1, "lt": 1000}
+	case "[0-9]{2,4}":
+		return map[string]interface{}{"gte": 10, "lte": 9999}
+
+	default:
+		// Fallback for unknown patterns - return a reasonable range
+		return map[string]interface{}{"gte": 0, "lt": 1000}
+	}
 }
 
 // processAggregations extracts counts from Elasticsearch aggregation results

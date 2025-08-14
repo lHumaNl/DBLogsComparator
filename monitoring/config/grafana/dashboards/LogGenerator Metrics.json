@@ -1014,7 +1014,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -1072,7 +1073,7 @@
             "h": 10,
             "w": 12,
             "x": 0,
-            "y": 49
+            "y": 48
           },
           "id": 11,
           "options": {
@@ -1155,7 +1156,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -1175,7 +1177,7 @@
             "h": 10,
             "w": 12,
             "x": 12,
-            "y": 49
+            "y": 48
           },
           "id": 12,
           "options": {
@@ -1202,7 +1204,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "rate(sum(dblogscomp_write_requests_failure{job=~\"$job\", system=~\"$system\"}) by (system, error_type) [$interval])",
+              "expr": "increase(dblogscomp_write_requests_failure{job=~\"$job\", system=~\"$system\"}[$interval])",
               "legendFormat": "{{system}} - {{error_type}}",
               "range": true,
               "refId": "A"
@@ -1258,7 +1260,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -1316,7 +1319,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 59
+            "y": 58
           },
           "id": 13,
           "options": {
@@ -1399,7 +1402,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -1419,7 +1423,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 59
+            "y": 58
           },
           "id": 14,
           "options": {
@@ -1560,7 +1564,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 70
+            "y": 69
           },
           "id": 52,
           "options": {
@@ -1663,7 +1667,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 70
+            "y": 69
           },
           "id": 53,
           "options": {
@@ -1780,7 +1784,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 50
+            "y": 61
           },
           "id": 16,
           "options": {
@@ -1875,7 +1879,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 50
+            "y": 61
           },
           "id": 18,
           "options": {
@@ -4162,7 +4166,7 @@
       "type": "row"
     }
   ],
-  "refresh": false,
+  "refresh": "",
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
@@ -4191,7 +4195,7 @@
       },
       {
         "current": {
-          "selected": false,
+          "selected": true,
           "text": [
             "All"
           ],
@@ -4247,7 +4251,7 @@
       },
       {
         "current": {
-          "selected": false,
+          "selected": true,
           "text": "30s",
           "value": "30s"
         },
@@ -4354,6 +4358,6 @@
   "timezone": "",
   "title": "LogGenerator Metrics",
   "uid": "go-log-generator",
-  "version": 2,
+  "version": 6,
   "weekStart": ""
 }
