@@ -58,5 +58,6 @@ type Options struct {
 	RetryDelay      time.Duration
 	Verbose         bool
 	Debug           bool // Debug mode for response body logging
+	Error           bool // Error logging mode for error message control
 	ConnectionCount int  // Number of HTTP connections for the pool
 }

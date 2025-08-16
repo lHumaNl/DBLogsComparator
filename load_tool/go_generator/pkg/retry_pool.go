@@ -269,12 +269,15 @@ func (rw *RetryWorker) processRetryRequest(req RetryRequest) {
 
 	// Handle result
 	if err == nil {
-		// Retry successful
+		// Retry successful - need to compensate for initial failure metrics
 
-		// Update success metrics
+		// Update success metrics (but adjust counters since initial failure was already recorded)
 		atomic.AddInt64(&req.Stats.SuccessfulRequests, 1)
 		atomic.AddInt64(&req.Stats.TotalLogs, int64(len(req.Logs)))
-		atomic.AddInt64(&req.Stats.TotalRequests, 1)
+		// Do NOT increment TotalRequests again - it was already incremented on initial failure
+
+		// Compensate for initial failure by decrementing FailedRequests
+		atomic.AddInt64(&req.Stats.FailedRequests, -1)
 
 		if req.Config.EnableMetrics {
 			common.ObserveWriteDuration(req.DB.Name(), "success", duration)
@@ -293,6 +296,10 @@ func (rw *RetryWorker) processRetryRequest(req RetryRequest) {
 				common.WriteLogsTotal.WithLabelValues(logType, req.DB.Name()).Add(float64(count))
 			}
 			common.IncrementSuccessfulWrite(req.DB.Name())
+
+			// Note: We cannot "undo" the Prometheus failure metrics that were already recorded
+			// This is a limitation of Prometheus counters (they can only increment)
+			// But internal stats will be correct for final reporting
 		}
 
 		// Send success response
@@ -332,6 +339,10 @@ func (rw *RetryWorker) processRetryRequest(req RetryRequest) {
 				select {
 				case rw.requests <- newReq:
 					submitted = true
+					// Record retry metric for each subsequent retry attempt
+					if req.Config.EnableMetrics {
+						common.WriteRequestsRetried.WithLabelValues(req.DB.Name(), fmt.Sprintf("%d", newReq.Attempt)).Inc()
+					}
 				case <-time.After(100 * time.Millisecond):
 					// Retry queue full, send failure
 				}
@@ -349,12 +360,12 @@ func (rw *RetryWorker) processRetryRequest(req RetryRequest) {
 
 // sendFinalFailure sends final failure response and updates metrics
 func (rw *RetryWorker) sendFinalFailure(req RetryRequest, err error) {
-	// Update failure metrics
-	atomic.AddInt64(&req.Stats.FailedRequests, 1)
-	atomic.AddInt64(&req.Stats.TotalRequests, 1)
+	// NOTE: Do not update FailedRequests and TotalRequests here, as they are already
+	// recorded in the main worker when the first attempt fails.
+	// This function is only called when retries are exhausted.
 
 	if req.Config.EnableMetrics {
-		// Count failures for each log type in the batch
+		// Only record additional metric for retry exhaustion (not a duplicate failure)
 		logCounts := make(map[string]int)
 		for _, log := range req.Logs {
 			if logType, ok := log["log_type"].(string); ok {
@@ -362,6 +373,7 @@ func (rw *RetryWorker) sendFinalFailure(req RetryRequest, err error) {
 			}
 		}
 		for logType := range logCounts {
+			// Use different error type to distinguish from initial failure
 			common.IncrementFailedWrite(req.DB.Name(), logType, "retry_exhausted")
 		}
 	}

@@ -1735,3 +1735,63 @@ func FixVictoriaLogsRegexEscaping(pattern string) string {
 
 	return pattern
 }
+
+// ========================= LOKI CARDINALITY OPTIMIZATION FUNCTIONS =========================
+
+// IsLabelField checks if a field should be used as a Loki label (from CommonLabels)
+func IsLabelField(field string) bool {
+	for _, label := range CommonLabels {
+		if field == label {
+			return true
+		}
+	}
+	return false
+}
+
+// GetNonLabelSearchableFields returns searchable fields that are NOT in CommonLabels
+func GetNonLabelSearchableFields() []string {
+	allFields := GetAllSearchableFields()
+	nonLabelFields := []string{}
+	for _, field := range allFields {
+		if !IsLabelField(field) {
+			nonLabelFields = append(nonLabelFields, field)
+		}
+	}
+	return nonLabelFields
+}
+
+// FieldsSplit represents separated fields for Loki hybrid queries (labels + JSON)
+type FieldsSplit struct {
+	LabelFields    []string
+	LabelValues    []interface{}
+	LabelOperators []string
+	JsonFields     []string
+	JsonValues     []interface{}
+	JsonOperators  []string
+}
+
+// SplitComplexQueryFields splits query fields into label vs JSON fields for Loki optimization
+func SplitComplexQueryFields(fields []string, values []interface{}, operators []string) FieldsSplit {
+	result := FieldsSplit{
+		LabelFields:    []string{},
+		LabelValues:    []interface{}{},
+		LabelOperators: []string{},
+		JsonFields:     []string{},
+		JsonValues:     []interface{}{},
+		JsonOperators:  []string{},
+	}
+
+	for i, field := range fields {
+		if IsLabelField(field) {
+			result.LabelFields = append(result.LabelFields, field)
+			result.LabelValues = append(result.LabelValues, values[i])
+			result.LabelOperators = append(result.LabelOperators, operators[i])
+		} else {
+			result.JsonFields = append(result.JsonFields, field)
+			result.JsonValues = append(result.JsonValues, values[i])
+			result.JsonOperators = append(result.JsonOperators, operators[i])
+		}
+	}
+
+	return result
+}

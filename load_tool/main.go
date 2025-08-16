@@ -47,6 +47,7 @@ func main() {
 	metricsPort := flag.Int("metrics-port", 9090, "Port for Prometheus metrics server")
 	mode := flag.String("mode", "generator", "Operation mode: generator, querier, combined")
 	loadMode := flag.String("load-mode", "stability", "Load testing mode: stability, maxPerf")
+	errorLogging := flag.Bool("error", true, "Enable error logging (default: true)")
 
 	flag.Parse()
 
@@ -133,6 +134,17 @@ func main() {
 		config.MetricsPort = *metricsPort
 	}
 
+	// Set error logging from command line (only if explicitly set)
+	var errorFlagSet bool
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "error" {
+			errorFlagSet = true
+		}
+	})
+	if errorFlagSet {
+		config.Error = errorLogging
+	}
+
 	// Set and validate load mode from command line
 	if *loadMode != "" {
 		switch *loadMode {
@@ -180,6 +192,12 @@ func main() {
 		(config.Mode == modeQuerierOnly && config.Querier.IsVerbose(config.Verbose)) ||
 		(config.Mode == modeCombined && (config.Generator.IsVerbose(config.Verbose) || config.Querier.IsVerbose(config.Verbose)))
 	common.InitTextLogger(verbose)
+
+	// Set error logging based on configuration
+	errorLoggingEnabled := (config.Mode == modeGeneratorOnly && config.Generator.IsError(config.Error)) ||
+		(config.Mode == modeQuerierOnly && config.Querier.IsError(config.Error)) ||
+		(config.Mode == modeCombined && (config.Generator.IsError(config.Error) || config.Querier.IsError(config.Error)))
+	common.SetErrorLogging(errorLoggingEnabled)
 
 	// Initialize Prometheus metrics if enabled
 	if config.Metrics {
@@ -349,6 +367,7 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 		MetricsPort:     cfg.MetricsPort,
 		GlobalVerbose:   cfg.Verbose,
 		GlobalDebug:     cfg.Debug,
+		GlobalError:     cfg.Error,
 	}
 
 	// Output information about log type distribution
@@ -369,6 +388,7 @@ func runGeneratorWithConfig(cfg *common.Config, stats *common.Stats) {
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
 		Debug:           cfg.Generator.IsDebug(cfg.Debug),
+		Error:           cfg.Generator.IsError(cfg.Error),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -396,6 +416,7 @@ func runGeneratorWithContextConfigAndRPSAndStatsLogger(ctx context.Context, cfg 
 		MetricsPort:     cfg.MetricsPort,
 		GlobalVerbose:   cfg.Verbose,
 		GlobalDebug:     cfg.Debug,
+		GlobalError:     cfg.Error,
 		RuntimeRPS:      rps, // Set specific RPS for this step
 	}
 
@@ -407,6 +428,7 @@ func runGeneratorWithContextConfigAndRPSAndStatsLogger(ctx context.Context, cfg 
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
 		Debug:           cfg.Generator.IsDebug(cfg.Debug),
+		Error:           cfg.Generator.IsError(cfg.Error),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -441,6 +463,7 @@ func runGeneratorWithContextConfigAndRPS(ctx context.Context, cfg *common.Config
 		MetricsPort:     cfg.MetricsPort,
 		GlobalVerbose:   cfg.Verbose,
 		GlobalDebug:     cfg.Debug,
+		GlobalError:     cfg.Error,
 		RuntimeRPS:      rps, // Set specific RPS for this step
 	}
 
@@ -452,6 +475,7 @@ func runGeneratorWithContextConfigAndRPS(ctx context.Context, cfg *common.Config
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
 		Debug:           cfg.Generator.IsDebug(cfg.Debug),
+		Error:           cfg.Generator.IsError(cfg.Error),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -486,6 +510,7 @@ func runGeneratorWithContextConfig(ctx context.Context, cfg *common.Config, stat
 		MetricsPort:     cfg.MetricsPort,
 		GlobalVerbose:   cfg.Verbose,
 		GlobalDebug:     cfg.Debug,
+		GlobalError:     cfg.Error,
 	}
 
 	// Create database client
@@ -496,6 +521,7 @@ func runGeneratorWithContextConfig(ctx context.Context, cfg *common.Config, stat
 		RetryDelay:      generatorConfig.RetryDelay(),
 		Verbose:         generatorConfig.IsVerbose(),
 		Debug:           cfg.Generator.IsDebug(cfg.Debug),
+		Error:           cfg.Generator.IsError(cfg.Error),
 		ConnectionCount: cfg.Generator.GetConnectionCount(),
 	}
 
@@ -884,6 +910,7 @@ func runQuerierWithConfig(config *common.Config, stats *common.Stats) error {
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
 		Debug:           config.Querier.IsDebug(config.Debug),
+		Error:           config.Querier.IsError(config.Error),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
@@ -953,6 +980,7 @@ func runQuerierWithConfigAndRPS(config *common.Config, stats *common.Stats, rps 
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
 		Debug:           config.Querier.IsDebug(config.Debug),
+		Error:           config.Querier.IsError(config.Error),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
@@ -1019,6 +1047,7 @@ func runQuerierWithConfigAndRPSAndContextAndStatsLogger(ctx context.Context, con
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
 		Debug:           config.Querier.IsDebug(config.Debug),
+		Error:           config.Querier.IsError(config.Error),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 
@@ -1084,6 +1113,7 @@ func runQuerierWithConfigAndRPSAndContext(ctx context.Context, config *common.Co
 		RetryDelay:      time.Duration(config.Querier.RetryDelayMs) * time.Millisecond,
 		Verbose:         config.Querier.IsVerbose(config.Verbose),
 		Debug:           config.Querier.IsDebug(config.Debug),
+		Error:           config.Querier.IsError(config.Error),
 		ConnectionCount: config.Querier.GetConnectionCount(),
 	}
 

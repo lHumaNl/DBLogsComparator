@@ -616,7 +616,7 @@
             "h": 9,
             "w": 12,
             "x": 0,
-            "y": 27
+            "y": 2
           },
           "id": 6,
           "options": {
@@ -724,7 +724,7 @@
             "h": 9,
             "w": 12,
             "x": 12,
-            "y": 27
+            "y": 2
           },
           "id": 58,
           "options": {
@@ -821,7 +821,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 36
+            "y": 11
           },
           "id": 8,
           "options": {
@@ -917,7 +917,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 36
+            "y": 11
           },
           "id": 9,
           "options": {
@@ -1073,7 +1073,7 @@
             "h": 10,
             "w": 12,
             "x": 0,
-            "y": 48
+            "y": 3
           },
           "id": 11,
           "options": {
@@ -1177,7 +1177,7 @@
             "h": 10,
             "w": 12,
             "x": 12,
-            "y": 48
+            "y": 3
           },
           "id": 12,
           "options": {
@@ -1319,7 +1319,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 58
+            "y": 13
           },
           "id": 13,
           "options": {
@@ -1423,7 +1423,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 58
+            "y": 13
           },
           "id": 14,
           "options": {
@@ -1506,7 +1506,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -1564,7 +1565,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 69
+            "y": 24
           },
           "id": 52,
           "options": {
@@ -1647,7 +1648,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -1667,7 +1669,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 69
+            "y": 24
           },
           "id": 53,
           "options": {
@@ -1764,7 +1766,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -1782,9 +1785,9 @@
           },
           "gridPos": {
             "h": 11,
-            "w": 12,
+            "w": 24,
             "x": 0,
-            "y": 61
+            "y": 4
           },
           "id": 16,
           "options": {
@@ -1815,91 +1818,7 @@
               "legendFormat": "{{system}}",
               "range": true,
               "refId": "A"
-            }
-          ],
-          "title": "Write Retries (Total)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "description": "Detailed breakdown of retry attempts by retry attempt number. Helps identify if issues are resolved quickly or require multiple retry attempts.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "vis": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "normal"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              },
-              "unit": "reqps"
             },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 11,
-            "w": 12,
-            "x": 12,
-            "y": 61
-          },
-          "id": 18,
-          "options": {
-            "legend": {
-              "calcs": [
-                "min",
-                "max",
-                "mean",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "targets": [
             {
               "datasource": {
                 "type": "prometheus",
@@ -1907,23 +1826,13 @@
               },
               "editorMode": "code",
               "expr": "rate(dblogscomp_write_requests_retried{job=~\"$job\", system=~\"$system\"}[$interval])",
+              "hide": false,
               "legendFormat": "{{system}} - Write Retry {{retry_attempt}}",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "editorMode": "code",
-              "expr": "rate(dblogscomp_read_requests_retried{job=~\"$job\", system=~\"$system\"}[$interval])",
-              "legendFormat": "{{system}} - Read Retry {{retry_attempt}}",
               "range": true,
               "refId": "B"
             }
           ],
-          "title": "Retry Attempts by Type",
+          "title": "Write Retries",
           "type": "timeseries"
         }
       ],
@@ -1987,7 +1896,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -1999,7 +1909,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 51
+            "y": 50
           },
           "id": 23,
           "options": {
@@ -2096,7 +2006,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -2189,7 +2100,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "rate(dblogscomp_write_duration_seconds_sum{job=~\"$job\", system=~\"$system\"}[$interval]) / rate(dblogscomp_write_duration_seconds_count{job=~\"$job\", system=~\"$system\"}[$interval])",
+              "expr": "rate(dblogscomp_write_duration_seconds_sum{job=~\"$job\", system=~\"$system\", status!=\"error\"}[$interval]) / rate(dblogscomp_write_duration_seconds_count{job=~\"$job\", system=~\"$system\", status!=\"error\"}[$interval])",
               "legendFormat": "{{system}}",
               "range": true,
               "refId": "A"
@@ -2245,7 +2156,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -2292,13 +2204,267 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "dblogscomp_write_duration_seconds{job=~\"$job\", system=~\"$system\", quantile=\"$percentile\"}",
-              "legendFormat": "{{status}} ($percentile) - {{system}}",
+              "expr": "dblogscomp_write_duration_seconds{job=~\"$job\", system=~\"$system\", quantile=\"$percentile\", status!=\"error\"}",
+              "legendFormat": "($percentile) - {{system}}",
               "range": true,
               "refId": "A"
             }
           ],
           "title": "Write Response Time by Status ($percentile)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Average write request response time per system. Lower values indicate better write performance. Calculated as total time divided by request count.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.1
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.5
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "elasticsearch"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "green",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "loki"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "blue",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "victorialogs"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "orange",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 16
+          },
+          "id": 59,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "rate(dblogscomp_write_duration_seconds_sum{job=~\"$job\", system=~\"$system\", status=\"error\"}[$interval]) / rate(dblogscomp_write_duration_seconds_count{job=~\"$job\", system=~\"$system\", status=\"error\"}[$interval])",
+              "legendFormat": "{{system}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Write Error Response Time (Average)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "95th percentile write response time by status and system. Shows worst-case write performance. Values above thresholds indicate performance issues.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.2
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 16
+          },
+          "id": 60,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "dblogscomp_write_duration_seconds{job=~\"$job\", system=~\"$system\", quantile=\"$percentile\", status=\"error\"}",
+              "legendFormat": "($percentile) - {{system}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Write Error Response Time by Status ($percentile)",
           "type": "timeseries"
         },
         {
@@ -2348,7 +2514,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -2368,7 +2535,7 @@
             "h": 10,
             "w": 24,
             "x": 0,
-            "y": 16
+            "y": 26
           },
           "id": 28,
           "options": {
@@ -2401,7 +2568,7 @@
               "refId": "A"
             }
           ],
-          "title": "Read Success Response Time by Status ($percentile)",
+          "title": "Read Success Response Time by Time Period ($percentile)",
           "type": "timeseries"
         },
         {
@@ -2451,7 +2618,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "yellow",
@@ -2471,7 +2639,111 @@
             "h": 10,
             "w": 24,
             "x": 0,
-            "y": 26
+            "y": 36
+          },
+          "id": 61,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "avg(dblogscomp_read_duration_seconds{job=~\"$job\", system=~\"$system\", status=\"success\", quantile=\"$percentile\"}) by (system,type)",
+              "legendFormat": "{{system}} - {{type}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Read Success Response Time by Type ($percentile)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "95th percentile read response time by status and system. Shows worst-case query performance. High values may indicate complex queries or system overload.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.1
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.5
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 46
           },
           "id": 55,
           "options": {
@@ -2504,7 +2776,111 @@
               "refId": "A"
             }
           ],
-          "title": "Read Failed Response Time by Status ($percentile)",
+          "title": "Read Failed Response Time by Time Period ($percentile)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "95th percentile read response time by status and system. Shows worst-case query performance. High values may indicate complex queries or system overload.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "vis": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.1
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.5
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 56
+          },
+          "id": 62,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "mean",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "avg(dblogscomp_read_duration_seconds{job=~\"$job\", system=~\"$system\", status!=\"success\", quantile=\"$percentile\"}) by (system, type)",
+              "legendFormat": "{{system}} - {{type}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Read Failed Response Time by Type ($percentile)",
           "type": "timeseries"
         }
       ],
@@ -2568,7 +2944,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -2944,7 +3321,7 @@
             "h": 12,
             "w": 12,
             "x": 0,
-            "y": 8
+            "y": 65
           },
           "id": 35,
           "options": {
@@ -3019,7 +3396,7 @@
             "h": 12,
             "w": 12,
             "x": 12,
-            "y": 8
+            "y": 65
           },
           "id": 36,
           "options": {
@@ -3113,7 +3490,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   }
                 ]
               },
@@ -3125,7 +3503,7 @@
             "h": 12,
             "w": 24,
             "x": 0,
-            "y": 20
+            "y": 77
           },
           "id": 37,
           "options": {
@@ -3220,7 +3598,7 @@
             "h": 14,
             "w": 24,
             "x": 0,
-            "y": 32
+            "y": 89
           },
           "id": 38,
           "options": {
@@ -4166,7 +4544,7 @@
       "type": "row"
     }
   ],
-  "refresh": "",
+  "refresh": false,
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
@@ -4351,13 +4729,13 @@
     ]
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "LogGenerator Metrics",
   "uid": "go-log-generator",
-  "version": 6,
+  "version": 13,
   "weekStart": ""
 }

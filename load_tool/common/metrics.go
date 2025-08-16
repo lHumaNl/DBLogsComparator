@@ -85,11 +85,6 @@ var (
 		Help: "Number of failed log read requests",
 	}, []string{"system", "query_type", "error_type"})
 
-	ReadRequestsRetried = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "dblogscomp_read_requests_retried",
-		Help: "Number of retried read requests",
-	}, []string{"system", "retry_attempt"})
-
 	ReadDurationSummary = promauto.NewSummaryVec(prometheus.SummaryOpts{
 		Name: "dblogscomp_read_duration_seconds",
 		Help: "Summary of read request execution times",

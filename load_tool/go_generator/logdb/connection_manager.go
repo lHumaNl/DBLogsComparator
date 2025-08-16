@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -92,11 +93,11 @@ func createOptimizedHTTPClient(options Options) *http.Client {
 		Timeout: options.Timeout,
 		Transport: &http.Transport{
 			// Connection pool settings optimized for bulk operations
-			MaxIdleConns:        100,              // Global pool size
-			MaxIdleConnsPerHost: 100,              // Per-host limit (higher for bulk operations)
-			MaxConnsPerHost:     100,              // Total active connections per host
-			IdleConnTimeout:     30 * time.Second, // Keep connections alive
-			DisableKeepAlives:   false,            // Enable keep-alive for performance
+			MaxIdleConns:        runtime.NumCPU(),     // Global pool size
+			MaxIdleConnsPerHost: runtime.NumCPU(),     // Per-host limit (higher for bulk operations)
+			MaxConnsPerHost:     runtime.NumCPU() * 4, // Total active connections per host
+			IdleConnTimeout:     30 * time.Second,     // Keep connections alive
+			DisableKeepAlives:   false,                // Enable keep-alive for performance
 
 			// Timeouts optimized for bulk operations
 			TLSHandshakeTimeout:   10 * time.Second,

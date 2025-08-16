@@ -11,6 +11,9 @@ import (
 // Logger is the structured logger instance
 var Logger *logrus.Logger
 
+// ErrorLoggingEnabled controls whether error messages are logged
+var ErrorLoggingEnabled = true // Default: errors are logged
+
 // InitLogger initializes the structured logger
 func InitLogger(verbose bool) {
 	Logger = logrus.New()
@@ -59,6 +62,11 @@ func InitTextLogger(verbose bool) {
 
 // LogError logs an error with context
 func LogError(component, operation string, err error, fields logrus.Fields) {
+	// Check if error logging is disabled
+	if !ErrorLoggingEnabled {
+		return
+	}
+
 	if Logger == nil {
 		InitTextLogger(false)
 	}
@@ -103,8 +111,18 @@ func LogDebug(component, message string, fields logrus.Fields) {
 	Logger.WithFields(fields).Debug(message)
 }
 
+// SetErrorLogging sets the global error logging flag
+func SetErrorLogging(enabled bool) {
+	ErrorLoggingEnabled = enabled
+}
+
 // LogQueryError logs a query error with detailed context and to error file
 func LogQueryError(workerID int, queryType, system string, err error, query string) {
+	// Check if error logging is disabled
+	if !ErrorLoggingEnabled {
+		return
+	}
+
 	// Get current timestamp
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 
@@ -143,6 +161,11 @@ func LogQuerySuccess(workerID int, queryType, system string, duration float64, h
 
 // LogGeneratorError logs a generator error with detailed context and to error file
 func LogGeneratorError(workerID int, system string, err error, request string) {
+	// Check if error logging is disabled
+	if !ErrorLoggingEnabled {
+		return
+	}
+
 	LogError("generator", "request_execution", err, logrus.Fields{
 		"worker_id": workerID,
 		"system":    system,
@@ -158,9 +181,17 @@ func LogGeneratorError(workerID int, system string, err error, request string) {
 
 // logToErrorFile writes error messages to timestamped error files
 func logToErrorFile(filename, message string) {
+	// Check if error logging is disabled - this is only called by LogGeneratorError which already checks
+	// but adding extra safety check
+	if !ErrorLoggingEnabled {
+		return
+	}
+
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		Logger.WithError(err).Error("Failed to open error log file")
+		if Logger != nil {
+			Logger.WithError(err).Error("Failed to open error log file")
+		}
 		return
 	}
 	defer file.Close()
@@ -168,12 +199,19 @@ func logToErrorFile(filename, message string) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	_, err = file.WriteString(fmt.Sprintf("[%s] %s\n", timestamp, message))
 	if err != nil {
-		Logger.WithError(err).Error("Failed to write to error log file")
+		if Logger != nil {
+			Logger.WithError(err).Error("Failed to write to error log file")
+		}
 	}
 }
 
 // LogLokiError logs a Loki-specific error with HTTP details
 func LogLokiError(statusCode int, query, url, response string) {
+	// Check if error logging is disabled
+	if !ErrorLoggingEnabled {
+		return
+	}
+
 	LogError("loki_executor", "http_request", nil, logrus.Fields{
 		"http_status":   statusCode,
 		"query":         query,

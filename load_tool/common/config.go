@@ -25,6 +25,7 @@ type Config struct {
 	MetricsPort     int             `yaml:"metrics_port,omitempty"` // Port for metrics (if not specified, 9090 is used)
 	Verbose         *bool           `yaml:"verbose,omitempty"`      // Global verbose setting (pointer for optional field)
 	Debug           *bool           `yaml:"debug,omitempty"`        // Global debug setting (pointer for optional field)
+	Error           *bool           `yaml:"error,omitempty"`        // Global error logging setting (pointer for optional field)
 	Combined        CombinedConfig  `yaml:"combined"`               // Combined mode timing configuration
 	Generator       GeneratorConfig `yaml:"generator"`
 	Querier         QuerierConfig   `yaml:"querier"`
@@ -58,6 +59,7 @@ type GeneratorConfig struct {
 	TimeoutMs    int            `yaml:"timeoutMs"`         // HTTP request timeout in milliseconds
 	Verbose      *bool          `yaml:"verbose,omitempty"` // Module-specific verbose override (pointer for optional field)
 	Debug        *bool          `yaml:"debug,omitempty"`   // Module-specific debug override (pointer for optional field)
+	Error        *bool          `yaml:"error,omitempty"`   // Module-specific error logging override (pointer for optional field)
 }
 
 // TimeRangeConfig - configuration for time ranges
@@ -106,6 +108,7 @@ type QuerierConfig struct {
 	TimeoutMs    int             `yaml:"timeoutMs"`         // HTTP request timeout in milliseconds
 	Verbose      *bool           `yaml:"verbose,omitempty"` // Module-specific verbose override (pointer for optional field)
 	Debug        *bool           `yaml:"debug,omitempty"`   // Module-specific debug override (pointer for optional field)
+	Error        *bool           `yaml:"error,omitempty"`   // Module-specific error logging override (pointer for optional field)
 	Distribution map[string]int  `yaml:"distribution"`
 	Times        TimeRangeConfig `yaml:"times"`
 }
@@ -252,6 +255,18 @@ func (g *GeneratorConfig) IsDebug(globalDebug *bool) bool {
 	return false // Default value
 }
 
+// IsError returns the effective error logging setting for the generator
+// Module-specific setting overrides global setting, defaults to true
+func (g *GeneratorConfig) IsError(globalError *bool) bool {
+	if g.Error != nil {
+		return *g.Error
+	}
+	if globalError != nil {
+		return *globalError
+	}
+	return true // Default value - errors are logged by default
+}
+
 // GetURL returns the URL for the selected logging system (querier)
 func (q *QuerierConfig) GetURL(system string) string {
 	switch system {
@@ -318,6 +333,18 @@ func (q *QuerierConfig) IsDebug(globalDebug *bool) bool {
 		return *globalDebug
 	}
 	return false // Default value
+}
+
+// IsError returns the effective error logging setting for the querier
+// Module-specific setting overrides global setting, defaults to true
+func (q *QuerierConfig) IsError(globalError *bool) bool {
+	if q.Error != nil {
+		return *q.Error
+	}
+	if globalError != nil {
+		return *globalError
+	}
+	return true // Default value - errors are logged by default
 }
 
 // SaveConfig saves the configuration to a YAML file
@@ -408,9 +435,6 @@ func validateLoadTestConfig(config LoadTestConfig, mode string) error {
 		if config.StartPercent <= 0 {
 			return fmt.Errorf("startPercent must be positive for maxPerf mode: %d", config.StartPercent)
 		}
-		if config.IncrementPercent <= 0 {
-			return fmt.Errorf("incrementPercent must be positive for maxPerf mode: %d", config.IncrementPercent)
-		}
 	} else if mode == "stability" {
 		if config.StepPercent <= 0 {
 			return fmt.Errorf("stepPercent must be positive for stability mode: %d", config.StepPercent)
@@ -441,8 +465,8 @@ func validateGeneratorConfig(config *GeneratorConfig) error {
 	if config.BulkSize <= 0 {
 		return fmt.Errorf("bulkSize must be positive: %d", config.BulkSize)
 	}
-	if config.BulkSize > 1000 {
-		return fmt.Errorf("bulkSize too high: %d, maximum recommended is 1000", config.BulkSize)
+	if config.BulkSize > 100000 {
+		return fmt.Errorf("bulkSize too high: %d, maximum recommended is 100000", config.BulkSize)
 	}
 
 	// Validate worker count

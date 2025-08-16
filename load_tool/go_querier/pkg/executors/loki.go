@@ -212,7 +212,7 @@ func (e *LokiExecutor) GenerateRandomQueryWithTimeRange(queryType models.QueryTy
 	}
 }
 
-// generateSimpleQuery creates a simple query using unified strategy
+// generateSimpleQuery creates a simple query using unified strategy with Loki cardinality optimization
 func (e *LokiExecutor) generateSimpleQuery(availableLabels []string) string {
 	// Use Loki-compatible unified simple query generation
 	params := logdata.GenerateUnifiedSimpleQueryForLoki()
@@ -220,7 +220,7 @@ func (e *LokiExecutor) generateSimpleQuery(availableLabels []string) string {
 	// Handle message search specially
 	if params.Field == "message" {
 		// Loki doesn't have labels for message content, so use text filter
-		// UNIFIED STRATEGY: Use catch-all positive selector for SimpleQuery consistency
+		// CARDINALITY OPTIMIZATION: Use universal selector for message searches
 		baseSelector := "{log_type=~\".+\"}"
 
 		// Convert value to string for text search
@@ -240,101 +240,156 @@ func (e *LokiExecutor) generateSimpleQuery(availableLabels []string) string {
 		}
 	}
 
-	// Handle regular label searches with Loki compatibility
-	valueStr := fmt.Sprintf("%v", params.Value)
+	// CARDINALITY OPTIMIZATION: Check if field is a label field or requires JSON search
+	if logdata.IsLabelField(params.Field) {
+		// Field is in CommonLabels - use direct label selector
+		valueStr := fmt.Sprintf("%v", params.Value)
 
-	// Convert negative conditions to positive when possible for SimpleQuery (only one condition)
-	field, operator, value := logdata.ConvertNegativeToPositive(params.Field, params.Operator, params.Value)
-	valueStr = fmt.Sprintf("%v", value)
+		// Convert negative conditions to positive when possible for SimpleQuery (only one condition)
+		field, operator, value := logdata.ConvertNegativeToPositive(params.Field, params.Operator, params.Value)
+		valueStr = fmt.Sprintf("%v", value)
 
-	// Fix regex escaping for Loki compatibility
-	if params.IsRegex || operator == "=~" || operator == "!~" {
-		valueStr = logdata.FixLokiRegexEscaping(valueStr)
+		// Fix regex escaping for Loki compatibility
+		if params.IsRegex || operator == "=~" || operator == "!~" {
+			valueStr = logdata.FixLokiRegexEscaping(valueStr)
+		}
+
+		var queryString string
+		switch operator {
+		case "=":
+			queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
+		case "=~":
+			queryString = fmt.Sprintf("{%s=~\"%s\"}", field, valueStr)
+		default:
+			// UNIFIED STRATEGY: GenerateUnifiedSimpleQueryForLoki() already ensures only positive operators
+			// Fallback to exact match for any unexpected operators
+			queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
+		}
+
+		return queryString
+	} else {
+		// Field is NOT in CommonLabels - use universal selector + JSON filtering
+		// CARDINALITY OPTIMIZATION: Universal selector ensures we don't create high-cardinality streams
+		baseSelector := "{log_type=~\".+\"}"
+
+		valueStr := fmt.Sprintf("%v", params.Value)
+
+		// Check if value needs regex escaping (contains regex patterns)
+		needsEscaping := params.IsRegex || params.Operator == "=~" || params.Operator == "!~" || strings.Contains(valueStr, `\.`) || strings.Contains(valueStr, `[`) || strings.Contains(valueStr, `(`)
+		if needsEscaping {
+			valueStr = logdata.FixLokiRegexEscaping(valueStr)
+		}
+
+		// Build JSON filter based on operator
+		var jsonFilter string
+		switch params.Operator {
+		case "=":
+			jsonFilter = fmt.Sprintf(" | json | %s=\"%s\"", params.Field, valueStr)
+		case "!=":
+			jsonFilter = fmt.Sprintf(" | json | %s!=\"%s\"", params.Field, valueStr)
+		case "=~":
+			jsonFilter = fmt.Sprintf(" | json | %s=~\"%s\"", params.Field, valueStr)
+		case "!~":
+			jsonFilter = fmt.Sprintf(" | json | %s!~\"%s\"", params.Field, valueStr)
+		default:
+			// Fallback to exact match
+			jsonFilter = fmt.Sprintf(" | json | %s=\"%s\"", params.Field, valueStr)
+		}
+
+		return baseSelector + jsonFilter
 	}
-
-	var queryString string
-	switch operator {
-	case "=":
-		queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
-	case "=~":
-		queryString = fmt.Sprintf("{%s=~\"%s\"}", field, valueStr)
-	default:
-		// UNIFIED STRATEGY: GenerateUnifiedSimpleQueryForLoki() already ensures only positive operators
-		// Fallback to exact match for any unexpected operators
-		queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
-	}
-
-	return queryString
 }
 
-// generateComplexQuery creates a complex query using unified strategy
+// generateComplexQuery creates a complex query using unified strategy with Loki cardinality optimization
 func (e *LokiExecutor) generateComplexQuery(availableLabels []string) string {
 	// Use Loki-compatible unified complex query generation
 	params := logdata.GenerateUnifiedComplexQueryForLoki()
 
-	// Generate ComplexQuery with unified parameters
+	// CARDINALITY OPTIMIZATION: Split fields into label vs JSON fields
+	split := logdata.SplitComplexQueryFields(params.Fields, params.Values, params.Operators)
 
-	// Build label expressions directly from Loki-compatible parameters
-	labelExpressions := make([]string, 0, len(params.Fields))
+	// Build base selector from label fields
+	var baseSelector string
+	if len(split.LabelFields) > 0 {
+		// Use actual label fields for selector
+		labelExpressions := make([]string, len(split.LabelFields))
 
-	for i, field := range params.Fields {
-		// Skip message field for label selector (will be handled as text filter)
+		for i, field := range split.LabelFields {
+			value := split.LabelValues[i]
+			operator := split.LabelOperators[i]
+
+			// Convert value to string and fix regex escaping for Loki compatibility
+			valueStr := fmt.Sprintf("%v", value)
+			// Apply regex escaping for regex operators OR if value looks like a regex pattern
+			if operator == "=~" || operator == "!~" || strings.Contains(valueStr, `\.`) {
+				valueStr = logdata.FixLokiRegexEscaping(valueStr)
+			}
+
+			// Build label expression
+			var expr string
+			switch operator {
+			case "=":
+				expr = fmt.Sprintf(`%s="%s"`, field, valueStr)
+			case "!=":
+				expr = fmt.Sprintf(`%s!="%s"`, field, valueStr)
+			case "=~":
+				expr = fmt.Sprintf(`%s=~"%s"`, field, valueStr)
+			case "!~":
+				expr = fmt.Sprintf(`%s!~"%s"`, field, valueStr)
+			default:
+				// Fallback to exact match
+				expr = fmt.Sprintf(`%s="%s"`, field, valueStr)
+			}
+
+			labelExpressions[i] = expr
+		}
+
+		// Apply simplified Loki validation for ComplexQuery requirements
+		labelExpressions = e.validateComplexQueryForLoki(labelExpressions)
+
+		// Build label selector
+		labelSelector := strings.Join(labelExpressions, ", ")
+		baseSelector = fmt.Sprintf("{%s}", labelSelector)
+	} else {
+		// No label fields - use universal selector
+		// CARDINALITY OPTIMIZATION: Use guaranteed low-cardinality selector
+		baseSelector = "{log_type=~\".+\"}"
+	}
+
+	// Add JSON filters for non-label fields
+	for i, field := range split.JsonFields {
+		// Skip message field (handled separately)
 		if field == "message" {
 			continue
 		}
 
-		value := params.Values[i]
-		operator := params.Operators[i]
-
-		// Convert value to string and fix regex escaping for Loki compatibility
+		value := split.JsonValues[i]
+		operator := split.JsonOperators[i]
 		valueStr := fmt.Sprintf("%v", value)
-		// Apply regex escaping for regex operators OR if value looks like a regex pattern
-		if operator == "=~" || operator == "!~" || strings.Contains(valueStr, `\.`) {
+
+		// Check if value needs regex escaping (contains regex patterns)
+		needsEscaping := operator == "=~" || operator == "!~" || strings.Contains(valueStr, `\.`) || strings.Contains(valueStr, `[`) || strings.Contains(valueStr, `(`)
+		if needsEscaping {
 			valueStr = logdata.FixLokiRegexEscaping(valueStr)
 		}
 
-		// Build label expression
-		var expr string
+		// Build JSON filter based on operator
+		var jsonFilter string
 		switch operator {
 		case "=":
-			expr = fmt.Sprintf(`%s="%s"`, field, valueStr)
+			jsonFilter = fmt.Sprintf(" | json | %s=\"%s\"", field, valueStr)
 		case "!=":
-			expr = fmt.Sprintf(`%s!="%s"`, field, valueStr)
+			jsonFilter = fmt.Sprintf(" | json | %s!=\"%s\"", field, valueStr)
 		case "=~":
-			expr = fmt.Sprintf(`%s=~"%s"`, field, valueStr)
+			jsonFilter = fmt.Sprintf(" | json | %s=~\"%s\"", field, valueStr)
 		case "!~":
-			expr = fmt.Sprintf(`%s!~"%s"`, field, valueStr)
+			jsonFilter = fmt.Sprintf(" | json | %s!~\"%s\"", field, valueStr)
 		default:
 			// Fallback to exact match
-			expr = fmt.Sprintf(`%s="%s"`, field, valueStr)
+			jsonFilter = fmt.Sprintf(" | json | %s=\"%s\"", field, valueStr)
 		}
 
-		labelExpressions = append(labelExpressions, expr)
-	}
-
-	// Apply simplified Loki validation for ComplexQuery requirements
-	labelExpressions = e.validateComplexQueryForLoki(labelExpressions)
-
-	// Build final query string with validated expressions
-
-	// Build final query string - simplified for fair comparison (only AND logic)
-	var queryString string
-	// FAIRNESS: Only AND logic for fair comparison across all systems
-	// Loki doesn't support OR in label selectors, so we use only AND everywhere
-	if len(labelExpressions) > 0 {
-		labelSelector := strings.Join(labelExpressions, ", ")
-		queryString = fmt.Sprintf("{%s}", labelSelector)
-	} else {
-		// Generate fallback using unified approach
-		fallbackParams := logdata.GenerateUnifiedSimpleQueryForLoki()
-		field, operator, value := logdata.ConvertNegativeToPositive(fallbackParams.Field, fallbackParams.Operator, fallbackParams.Value)
-		valueStr := fmt.Sprintf("%v", value)
-		if operator == "=~" || strings.Contains(valueStr, `\.`) {
-			valueStr = logdata.FixLokiRegexEscaping(valueStr)
-			queryString = fmt.Sprintf("{%s=~\"%s\"}", field, valueStr)
-		} else {
-			queryString = fmt.Sprintf("{%s=\"%s\"}", field, valueStr)
-		}
+		baseSelector += jsonFilter
 	}
 
 	// Add message search component if present
@@ -348,17 +403,15 @@ func (e *LokiExecutor) generateComplexQuery(availableLabels []string) string {
 
 		// Use appropriate text filter operator
 		if params.MessageSearch.IsRegex || params.MessageSearch.Operator == "=~" {
-			queryString = fmt.Sprintf("%s |~ \"%s\"", queryString, keyword)
+			baseSelector = fmt.Sprintf("%s |~ \"%s\"", baseSelector, keyword)
 		} else if params.MessageSearch.Operator == "!~" || params.MessageSearch.Operator == "!=" {
-			queryString = fmt.Sprintf("%s !~ \"%s\"", queryString, keyword)
+			baseSelector = fmt.Sprintf("%s !~ \"%s\"", baseSelector, keyword)
 		} else {
-			queryString = fmt.Sprintf("%s |= \"%s\"", queryString, keyword)
+			baseSelector = fmt.Sprintf("%s |= \"%s\"", baseSelector, keyword)
 		}
 	}
 
-	// FAIRNESS: No mixed logic for fair comparison - only AND logic
-
-	return queryString
+	return baseSelector
 }
 
 // generateAnalyticalQuery creates an analytical query

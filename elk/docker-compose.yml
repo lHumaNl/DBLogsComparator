@@ -8,7 +8,7 @@ networks:
 
 services:
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ES_VERSION}
+    image: elasticsearch:${ES_VERSION}
     container_name: elasticsearch
     environment:
       - node.name=elasticsearch
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:${ES_VERSION}
+    image: kibana:${ES_VERSION}
     container_name: kibana
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200

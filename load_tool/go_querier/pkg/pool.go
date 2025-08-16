@@ -16,8 +16,10 @@ type ClientPool struct {
 // NewClientPool creates a new HTTP client pool with optimized configuration for querier
 func NewClientPool(size int, timeout time.Duration) *ClientPool {
 	// If size is 0 or negative, use CPU-based allocation
-	if size <= 0 {
-		size = runtime.NumCPU() * 4 // Conservative approach for queries
+	size = runtime.NumCPU() / 2 // Conservative approach for queries
+
+	if size < 16 {
+		size = 16
 	}
 
 	pool := &ClientPool{
@@ -25,14 +27,13 @@ func NewClientPool(size int, timeout time.Duration) *ClientPool {
 	}
 
 	// Optimize connection pool settings for query workload
-	maxConns := size * 4 // Fewer connections per client for queries
 	for i := 0; i < size; i++ {
 		pool.clients[i] = &http.Client{
 			Transport: &http.Transport{
-				MaxIdleConns:          maxConns,
-				MaxIdleConnsPerHost:   maxConns,
-				MaxConnsPerHost:       maxConns,
-				IdleConnTimeout:       90 * time.Second,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   100,
+				MaxConnsPerHost:       100,
+				IdleConnTimeout:       30 * time.Second,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
 				DisableKeepAlives:     false,

@@ -16,7 +16,7 @@ services:
     command:
       - "--storageDataPath=/victoria-logs-data"
       - "--retentionPeriod=${VICTORIALOGS_RETENTION_PERIOD}"
-      - "--retention.maxDiskSpaceUsageBytes=${VICTORIALOGS_MAX_DISK_SIZE}"
+      #- "--retention.maxDiskSpaceUsageBytes=${VICTORIALOGS_MAX_DISK_SIZE}"
       - "--loggerLevel=${VICTORIALOGS_LOG_LEVEL}"
       - "--httpListenAddr=:9428"
       - "--memory.allowedBytes=${VICTORIALOGS_MEMORY_ALLOWED_BYTES}"

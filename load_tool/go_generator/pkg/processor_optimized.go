@@ -292,7 +292,26 @@ func (w *OptimizedWorker) processRequest() {
 		}
 
 	} else {
-		// First attempt failed - submit to retry pool if retries are enabled
+		// First attempt failed - ALWAYS record failure metrics immediately
+		atomic.AddInt64(&w.stats.FailedRequests, 1)
+		atomic.AddInt64(&w.stats.TotalRequests, 1)
+
+		if w.config.EnableMetrics {
+			common.ObserveWriteDuration(w.db.Name(), "error", duration)
+
+			// Record failure metrics for each log type in the batch
+			logCounts := make(map[string]int)
+			for _, log := range logs {
+				if logType, ok := log["log_type"].(string); ok {
+					logCounts[logType]++
+				}
+			}
+			for logType := range logCounts {
+				common.IncrementFailedWrite(w.db.Name(), logType, "send_error")
+			}
+		}
+
+		// Then try retry if configured
 		if w.config.MaxRetries > 0 {
 			retryReq := RetryRequest{
 				Logs:         logs,
@@ -308,17 +327,21 @@ func (w *OptimizedWorker) processRequest() {
 			}
 
 			submitted := w.retryPool.SubmitRetry(retryReq)
-			if !submitted {
-				// Retry pool full, count as immediate failure
-				w.recordFailure(logs, err)
+			if submitted {
+				// Successfully submitted for retry - record retry metric
+				if w.config.EnableMetrics {
+					common.WriteRequestsRetried.WithLabelValues(w.db.Name(), "1").Inc()
+				}
+			} else {
+				// Retry pool full - log additional error
+				payload, _ := w.db.FormatPayload(logs)
+				retryErr := fmt.Errorf("retry pool full, original error: %v", err)
+				common.LogGeneratorError(w.id, w.db.Name(), retryErr, payload)
 			}
 		} else {
-			// No retries configured, count as immediate failure
-			w.recordFailure(logs, err)
-		}
-
-		if w.config.EnableMetrics {
-			common.ObserveWriteDuration(w.db.Name(), "error", duration)
+			// No retries configured - log error to file
+			payload, _ := w.db.FormatPayload(logs)
+			common.LogGeneratorError(w.id, w.db.Name(), err, payload)
 		}
 	}
 }
@@ -528,12 +551,6 @@ func RunGeneratorOptimizedWithContextAndStatsLogger(ctx context.Context, config 
 	// Variables for accurate timing calculation
 	var actualEndTime time.Time
 	var actualDuration time.Duration
-
-	// Create worker pool with CPU-based sizing and context support
-	numWorkers := runtime.NumCPU() * 4
-	if numWorkers < 16 {
-		numWorkers = 16
-	}
 
 	// Create context for coordinated shutdown
 	workerCtx, workerCancel := context.WithCancel(ctx)

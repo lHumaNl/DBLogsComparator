@@ -17,9 +17,10 @@ type GeneratorConfig struct {
 	Duration      time.Duration // Test duration
 	EnableMetrics bool          // Whether metrics are enabled
 	MetricsPort   int           // Metrics server port
-	// Global settings for verbose/debug priority logic
+	// Global settings for verbose/debug/error priority logic
 	GlobalVerbose *bool // Global verbose setting from root config
 	GlobalDebug   *bool // Global debug setting from root config
+	GlobalError   *bool // Global error logging setting from root config
 	// Runtime settings (can be modified during execution)
 	RuntimeRPS float64 // Current RPS (overrides config RPS if > 0)
 }
@@ -27,12 +28,8 @@ type GeneratorConfig struct {
 // GetLogGenerationWorkers returns the number of workers for log generation
 // FIXED: Always limits to CPU*4 to prevent excessive goroutine creation
 func (c *GeneratorConfig) GetLogGenerationWorkers() int {
-	cpuCores := runtime.NumCPU()
+	cpuCores := runtime.NumCPU() * 4
 	maxWorkers := cpuCores
-
-	if maxWorkers > 16 {
-		maxWorkers = 16
-	}
 
 	// Never exceed bulkSize (no point in having more workers than work items)
 	if maxWorkers > c.BulkSize {
@@ -74,6 +71,12 @@ func (c *GeneratorConfig) IsDebug() bool {
 	return c.GeneratorConfig.IsDebug(c.GlobalDebug)
 }
 
+// IsError returns the effective error logging setting with priority logic
+// Module-specific setting overrides global setting, defaults to true
+func (c *GeneratorConfig) IsError() bool {
+	return c.GeneratorConfig.IsError(c.GlobalError)
+}
+
 // Stats - execution statistics with thread-safe operations
 type Stats struct {
 	TotalRequests      int64
@@ -93,10 +96,6 @@ func calculateLogGenerationWorkers(rps, bulkSize, cpuCores int) int {
 	// This function is no longer used but kept for backward compatibility
 	// All calls now redirect to the fixed CPU*4 implementation
 	maxWorkers := cpuCores
-
-	if maxWorkers > 16 {
-		maxWorkers = 16
-	}
 
 	if maxWorkers > bulkSize {
 		maxWorkers = bulkSize
