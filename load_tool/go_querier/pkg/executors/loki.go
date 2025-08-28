@@ -42,7 +42,8 @@ func NewLokiExecutor(baseURL string, options models.Options) *LokiExecutor {
 	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
 
 	// Initialize with static labels from our common data package
-	availableLabels := logdata.CommonLabels
+	// CARDINALITY OPTIMIZATION: Use Loki-specific reduced label set
+	availableLabels := logdata.LokiCommonLabels
 
 	// Initialize label cache with static values
 	labelCache := make(map[string][]string)
@@ -68,7 +69,8 @@ func NewLokiExecutorWithTimeConfig(baseURL string, options models.Options, timeC
 	// Create HTTP client pool with dynamic connection count
 	clientPool := pkg.NewClientPool(options.ConnectionCount, options.Timeout)
 	// Initialize with static labels from our common data package
-	availableLabels := logdata.CommonLabels
+	// CARDINALITY OPTIMIZATION: Use Loki-specific reduced label set
+	availableLabels := logdata.LokiCommonLabels
 	// Initialize label cache with static values
 	labelCache := make(map[string][]string)
 	labelValuesMap := logdata.GetLabelValuesMap()
@@ -752,7 +754,8 @@ func (e *LokiExecutor) generateTopKQuery(availableLabels []string) string {
 func (e *LokiExecutor) validateComplexQueryForLoki(expressions []string) []string {
 	if len(expressions) == 0 {
 		// Generate fallback positive condition if no expressions
-		return []string{fmt.Sprintf(`%s=~".+"`, logdata.CommonLabels[0])}
+		// CARDINALITY OPTIMIZATION: Use Loki-specific label for fallback
+		return []string{fmt.Sprintf(`%s=~".+"`, logdata.LokiCommonLabels[0])}
 	}
 
 	hasPositive := false
@@ -770,7 +773,8 @@ func (e *LokiExecutor) validateComplexQueryForLoki(expressions []string) []strin
 	// Ensure minimum 2 conditions and 1 positive matcher
 	if len(validatedExpressions) < 2 || !hasPositive {
 		// Add guaranteed positive condition at the beginning
-		positiveExpr := fmt.Sprintf(`%s=~".+"`, logdata.CommonLabels[0])
+		// CARDINALITY OPTIMIZATION: Use Loki-specific label for fallback
+		positiveExpr := fmt.Sprintf(`%s=~".+"`, logdata.LokiCommonLabels[0])
 		validatedExpressions = append([]string{positiveExpr}, validatedExpressions...)
 	}
 

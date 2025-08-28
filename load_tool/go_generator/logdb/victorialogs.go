@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/dblogscomparator/DBLogsComparator/load_tool/common/logdata"
 )
 
 // VictoriaLogsDB - implementation of LogDB for VictoriaLogs
@@ -73,6 +76,127 @@ func (db *VictoriaLogsDB) Name() string {
 	return "victorialogs"
 }
 
+// getStreamStrategy returns the stream generation strategy based on environment variable
+func (db *VictoriaLogsDB) getStreamStrategy() string {
+	strategy := os.Getenv("VICTORIALOGS_STREAM_STRATEGY")
+	switch strategy {
+	case "full":
+		return "full_commonlabels"
+	case "selective":
+		return "selective_commonlabels"
+	case "max":
+		return "max_cardinality"
+	default:
+		return "max_cardinality" // Changed default to use all 18 fields for maximum cardinality
+	}
+}
+
+// escapeStreamValue escapes special characters for VictoriaLogs stream syntax
+func escapeStreamValue(value string) string {
+	// Escape special characters for VictoriaLogs stream syntax
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "\n", "\\n")
+	value = strings.ReplaceAll(value, "\t", "\\t")
+	return value
+}
+
+// generateStreamLabels generates optimized stream labels using CommonLabels for fair comparison
+func (db *VictoriaLogsDB) generateStreamLabels(logEntry LogEntry) string {
+	strategy := db.getStreamStrategy()
+
+	var streamLabels []string
+
+	switch strategy {
+	case "full_commonlabels":
+		// Use all CommonLabels for stream generation (6 fields)
+		for _, label := range logdata.CommonLabels {
+			if value, exists := logEntry[label]; exists {
+				escapedValue := escapeStreamValue(fmt.Sprintf("%v", value))
+				streamLabels = append(streamLabels, fmt.Sprintf(`%s="%s"`, label, escapedValue))
+			}
+		}
+
+	case "selective_commonlabels":
+		// Use selective high-impact CommonLabels for balanced cardinality (4 fields)
+		essentialLabels := []string{"log_type", "environment", "service", "datacenter"}
+		for _, label := range essentialLabels {
+			if value, exists := logEntry[label]; exists {
+				escapedValue := escapeStreamValue(fmt.Sprintf("%v", value))
+				streamLabels = append(streamLabels, fmt.Sprintf(`%s="%s"`, label, escapedValue))
+			}
+		}
+
+	case "max_cardinality":
+		// Use all 18 searchable fields for maximum cardinality and fair comparison
+		allFields := logdata.GetAllSearchableFields()
+		for _, field := range allFields {
+			if value, exists := logEntry[field]; exists {
+				escapedValue := escapeStreamValue(fmt.Sprintf("%v", value))
+				streamLabels = append(streamLabels, fmt.Sprintf(`%s="%s"`, field, escapedValue))
+			}
+		}
+
+	default:
+		// Fallback to minimal legacy approach
+		if logType, exists := logEntry["log_type"]; exists {
+			escapedValue := escapeStreamValue(fmt.Sprintf("%v", logType))
+			streamLabels = append(streamLabels, fmt.Sprintf(`log_type="%s"`, escapedValue))
+		}
+		if env, exists := logEntry["environment"]; exists {
+			escapedValue := escapeStreamValue(fmt.Sprintf("%v", env))
+			streamLabels = append(streamLabels, fmt.Sprintf(`environment="%s"`, escapedValue))
+		}
+	}
+
+	// Return formatted stream identifier
+	if len(streamLabels) > 0 {
+		return "{" + strings.Join(streamLabels, ",") + "}"
+	}
+
+	// Fallback stream if no labels available
+	return `{log_type="unknown"}`
+}
+
+// isStreamLabel checks if a field should be used as a stream label
+func (db *VictoriaLogsDB) isStreamLabel(field string) bool {
+	strategy := db.getStreamStrategy()
+
+	switch strategy {
+	case "full_commonlabels":
+		// Check against all CommonLabels (6 fields)
+		for _, label := range logdata.CommonLabels {
+			if field == label {
+				return true
+			}
+		}
+
+	case "selective_commonlabels":
+		// Check against selective labels (4 fields)
+		essentialLabels := []string{"log_type", "environment", "service", "datacenter"}
+		for _, label := range essentialLabels {
+			if field == label {
+				return true
+			}
+		}
+
+	case "max_cardinality":
+		// Check against all 18 searchable fields for maximum cardinality
+		allFields := logdata.GetAllSearchableFields()
+		for _, searchableField := range allFields {
+			if field == searchableField {
+				return true
+			}
+		}
+
+	default:
+		// Legacy minimal labels
+		return field == "log_type" || field == "environment"
+	}
+
+	return false
+}
+
 // FormatPayload formats log entries in NDJSON format for VictoriaLogs
 func (db *VictoriaLogsDB) FormatPayload(logs []LogEntry) (string, string) {
 	var buf bytes.Buffer
@@ -115,8 +239,11 @@ func (db *VictoriaLogsDB) formatPayloadInternal(logs []LogEntry, buf *bytes.Buff
 			log["message"] = fmt.Sprintf("Log message for %s", log["log_type"])
 		}
 
+		// Format log with optimized stream configuration
+		vlDoc := db.formatLogWithOptimizedStream(log)
+
 		// Use streaming encoder (optimization: no intermediate []byte allocation)
-		if err := encoder.Encode(log); err != nil {
+		if err := encoder.Encode(vlDoc); err != nil {
 			continue
 		}
 
@@ -126,6 +253,28 @@ func (db *VictoriaLogsDB) formatPayloadInternal(logs []LogEntry, buf *bytes.Buff
 
 	// For VictoriaLogs, use content-type application/stream+json
 	return buf.String(), "application/stream+json"
+}
+
+// formatLogWithOptimizedStream formats a single log entry with optimized stream configuration
+func (db *VictoriaLogsDB) formatLogWithOptimizedStream(logEntry LogEntry) map[string]interface{} {
+	// Generate optimized stream labels using CommonLabels
+	streamLabels := db.generateStreamLabels(logEntry)
+
+	// Create VictoriaLogs document format
+	vlDoc := map[string]interface{}{
+		"_stream": streamLabels,
+		"_time":   logEntry["timestamp"],
+		"_msg":    logEntry["message"],
+	}
+
+	// Add non-stream fields as regular fields
+	for key, value := range logEntry {
+		if !db.isStreamLabel(key) && key != "timestamp" && key != "message" {
+			vlDoc[key] = value
+		}
+	}
+
+	return vlDoc
 }
 
 // SendLogs sends a batch of logs to VictoriaLogs
@@ -234,8 +383,8 @@ func (db *VictoriaLogsDB) SendLogsWithBuffer(logs []LogEntry, buf *bytes.Buffer)
 			time.Sleep(backoff)
 		}
 
-		// Create the request
-		req, err := http.NewRequest("POST", db.URL+"/insert/jsonline", strings.NewReader(payload))
+		// Create the request (URL already includes /insert/jsonline path)
+		req, err := http.NewRequest("POST", db.URL, strings.NewReader(payload))
 		if err != nil {
 			lastErr = fmt.Errorf("failed to create request: %w", err)
 			continue

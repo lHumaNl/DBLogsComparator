@@ -28,6 +28,14 @@ var CommonLabels = []string{
 	"service",
 }
 
+// LokiCommonLabels contains reduced label set optimized for Loki cardinality (2-3 labels recommended)
+// Using only the most essential fields to reduce stream cardinality from ~1M to ~500K
+var LokiCommonLabels = []string{
+	"log_type",    // 5 values: essential for log type filtering
+	"environment", // 6 values: critical for environment separation
+	"service",     // 25 values: key business dimension
+}
+
 // SearchableFieldsByLogType defines the fields that should be searchable for each log type
 // This ensures all databases can perform the same searches for fair comparison
 var SearchableFieldsByLogType = map[string][]string{
@@ -362,8 +370,9 @@ var FilterLabels = []string{
 }
 
 // GroupByFields contains fields used for grouping in TimeSeriesQuery across all systems
+// Updated to prioritize fields available as keywords in Elasticsearch for fair comparison
 var GroupByFields = []string{
-	"service", "level", "host", "container_name",
+	"service", "log_type", "environment", "level",
 }
 
 // TopKValues contains possible K values for TopKQuery across all systems
@@ -518,6 +527,40 @@ var UniversalTimeWindows = []string{
 }
 
 // ========================= ELASTICSEARCH CONSTANTS =========================
+
+// ElasticsearchKeywordFields contains fields that should be keyword-indexed in Elasticsearch
+// Reduced to match Loki's LokiCommonLabels for fair performance comparison (3 fields only)
+var ElasticsearchKeywordFields = LokiCommonLabels
+
+// IsElasticsearchKeywordField checks if a field should be indexed as keyword in Elasticsearch
+// Only CommonLabels are keyword-indexed for optimal performance and memory usage
+func IsElasticsearchKeywordField(field string) bool {
+	for _, keywordField := range ElasticsearchKeywordFields {
+		if field == keywordField {
+			return true
+		}
+	}
+	return false
+}
+
+// GetElasticsearchKeywordFields returns the list of fields that should be keyword-indexed
+func GetElasticsearchKeywordFields() []string {
+	return ElasticsearchKeywordFields
+}
+
+// GetElasticsearchTextFields returns all other searchable fields that should be text-indexed
+func GetElasticsearchTextFields() []string {
+	allFields := GetAllSearchableFields()
+	textFields := make([]string, 0)
+
+	for _, field := range allFields {
+		if !IsElasticsearchKeywordField(field) {
+			textFields = append(textFields, field)
+		}
+	}
+
+	return textFields
+}
 
 // ElasticsearchQueryPhrases contains keywords for ES message searches
 var ElasticsearchQueryPhrases = []string{
@@ -1738,9 +1781,10 @@ func FixVictoriaLogsRegexEscaping(pattern string) string {
 
 // ========================= LOKI CARDINALITY OPTIMIZATION FUNCTIONS =========================
 
-// IsLabelField checks if a field should be used as a Loki label (from CommonLabels)
+// IsLabelField checks if a field should be used as a Loki label (from LokiCommonLabels)
+// CARDINALITY OPTIMIZATION: Updated to use reduced Loki label set
 func IsLabelField(field string) bool {
-	for _, label := range CommonLabels {
+	for _, label := range LokiCommonLabels {
 		if field == label {
 			return true
 		}
@@ -1748,7 +1792,8 @@ func IsLabelField(field string) bool {
 	return false
 }
 
-// GetNonLabelSearchableFields returns searchable fields that are NOT in CommonLabels
+// GetNonLabelSearchableFields returns searchable fields that are NOT in LokiCommonLabels
+// CARDINALITY OPTIMIZATION: Updated to work with reduced Loki label set
 func GetNonLabelSearchableFields() []string {
 	allFields := GetAllSearchableFields()
 	nonLabelFields := []string{}

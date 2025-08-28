@@ -88,14 +88,38 @@ func GetRandomMetricName() string {
 
 // GetLabelValuesMap returns a map of label names to their possible values
 func GetLabelValuesMap() map[string][]string {
+	// Helper function to convert int slice to string slice
+	convertIntsToStrings := func(ints []int) []string {
+		stringSlice := make([]string, len(ints))
+		for i, v := range ints {
+			stringSlice[i] = fmt.Sprintf("%d", v)
+		}
+		return stringSlice
+	}
+
 	return map[string][]string{
+		// CommonLabels (keyword fields)
 		"log_type":       LogTypes,
 		"host":           Hosts,
 		"container_name": ContainerNames,
 		"environment":    Environments,
 		"datacenter":     DataCenters,
 		"service":        Services,
-		"level":          LogLevels,
+
+		// Other searchable fields (text fields) - using existing constants
+		"level":           LogLevels,
+		"status":          convertIntsToStrings(HttpStatusCodes),
+		"request_method":  HttpMethods,
+		"error_code":      convertIntsToStrings(HttpStatusCodes),
+		"metric_name":     MetricNames,
+		"event_type":      EventTypes,
+		"exception":       ExceptionTypes,
+		"response_status": convertIntsToStrings(HttpStatusCodes),
+		"region":          DataCenters, // Reuse existing DataCenters
+
+		// Simple generated values for high-cardinality fields
+		"user_id":   {"user-1", "user-2", "user-3", "user-4", "user-5"},
+		"namespace": {"default", "kube-system", "monitoring", "auth", "payments"},
 	}
 }
 

@@ -616,7 +616,7 @@
             "h": 9,
             "w": 12,
             "x": 0,
-            "y": 2
+            "y": 27
           },
           "id": 6,
           "options": {
@@ -724,7 +724,7 @@
             "h": 9,
             "w": 12,
             "x": 12,
-            "y": 2
+            "y": 27
           },
           "id": 58,
           "options": {
@@ -821,7 +821,7 @@
             "h": 11,
             "w": 12,
             "x": 0,
-            "y": 11
+            "y": 36
           },
           "id": 8,
           "options": {
@@ -917,7 +917,7 @@
             "h": 11,
             "w": 12,
             "x": 12,
-            "y": 11
+            "y": 36
           },
           "id": 9,
           "options": {
@@ -1204,7 +1204,7 @@
                 "uid": "${datasource}"
               },
               "editorMode": "code",
-              "expr": "increase(dblogscomp_write_requests_failure{job=~\"$job\", system=~\"$system\"}[$interval])",
+              "expr": "rate(dblogscomp_write_requests_failure{job=~\"$job\", system=~\"$system\"}[$interval])",
               "legendFormat": "{{system}} - {{error_type}}",
               "range": true,
               "refId": "A"
@@ -1815,7 +1815,7 @@
               },
               "editorMode": "code",
               "expr": "sum by (system) (rate(dblogscomp_write_requests_retried{job=~\"$job\", system=~\"$system\"}[$interval]))",
-              "legendFormat": "{{system}}",
+              "legendFormat": "{{system}} All",
               "range": true,
               "refId": "A"
             },
@@ -4729,13 +4729,13 @@
     ]
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "LogGenerator Metrics",
   "uid": "go-log-generator",
-  "version": 13,
+  "version": 15,
   "weekStart": ""
 }

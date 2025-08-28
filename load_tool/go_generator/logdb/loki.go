@@ -27,7 +27,7 @@ func NewLokiDB(baseURL string, options Options) (*LokiDB, error) {
 	db := &LokiDB{
 		BaseLogDB:   base,
 		Labels:      make(map[string]string),
-		LabelFields: logdata.CommonLabels,
+		LabelFields: logdata.LokiCommonLabels,
 	}
 
 	// Use shared connection pool manager for generator

@@ -258,18 +258,32 @@ func (e *ElasticsearchExecutor) generateSimpleQuery(baseQuery map[string]interfa
 				filters = append(filters, filter)
 			}
 		} else {
-			// Handle string fields and exact matches
-			queryType := "term" // default
+			// Handle string fields - use different query types based on field type
+			var queryType string
+			var esField string
 
-			// Use regexp for string fields with regex
-			if params.IsRegex || params.Operator == "=~" {
-				queryType = "regexp"
-			}
-
-			// Prepare field for Elasticsearch (add .keyword for string fields)
-			esField := params.Field
 			if fieldExists && fieldType == logdata.StringField {
-				esField += ".keyword"
+				if logdata.IsElasticsearchKeywordField(params.Field) {
+					// CommonLabels use keyword field with term/regexp queries
+					esField = params.Field + ".keyword"
+					if params.IsRegex || params.Operator == "=~" {
+						queryType = "regexp"
+					} else {
+						queryType = "term"
+					}
+				} else {
+					// Non-CommonLabels use text field with match queries
+					esField = params.Field
+					queryType = "match"
+				}
+			} else {
+				// Non-string fields use term/regexp as before
+				esField = params.Field
+				if params.IsRegex || params.Operator == "=~" {
+					queryType = "regexp"
+				} else {
+					queryType = "term"
+				}
 			}
 
 			filter := map[string]interface{}{}
@@ -372,18 +386,32 @@ func (e *ElasticsearchExecutor) generateComplexQuery(baseQuery map[string]interf
 					}
 				}
 			} else {
-				// Handle string fields and exact matches
-				queryType := "term" // default
+				// Handle string fields - use different query types based on field type
+				var queryType string
+				var esField string
 
-				// Use regexp for string fields with regex
-				if isRegex || operator == "=~" || operator == "!~" {
-					queryType = "regexp"
-				}
-
-				// Prepare field for Elasticsearch (add .keyword for string fields)
-				esField := field
 				if fieldExists && fieldType == logdata.StringField {
-					esField += ".keyword"
+					if logdata.IsElasticsearchKeywordField(field) {
+						// CommonLabels use keyword field with term/regexp queries
+						esField = field + ".keyword"
+						if isRegex || operator == "=~" || operator == "!~" {
+							queryType = "regexp"
+						} else {
+							queryType = "term"
+						}
+					} else {
+						// Non-CommonLabels use text field with match queries
+						esField = field
+						queryType = "match"
+					}
+				} else {
+					// Non-string fields use term/regexp as before
+					esField = field
+					if isRegex || operator == "=~" || operator == "!~" {
+						queryType = "regexp"
+					} else {
+						queryType = "term"
+					}
 				}
 
 				filter = map[string]interface{}{
@@ -676,17 +704,42 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 	params := logdata.GenerateUnifiedAnalyticalQuery()
 
 	// Add base filter using unified parameters
-	// Prepare filter field for Elasticsearch (add .keyword for string fields)
+	// Prepare filter field for Elasticsearch - use keyword field only for CommonLabels
 	esFilterField := params.FilterField
 	if fieldType, exists := logdata.FieldTypeMap[params.FilterField]; exists && fieldType == logdata.StringField {
-		esFilterField += ".keyword"
+		if logdata.IsElasticsearchKeywordField(params.FilterField) {
+			esFilterField += ".keyword"
+		}
+		// For other string fields, use the field as-is (text type)
 	}
 
-	filters = append(filters, map[string]interface{}{
-		"term": map[string]interface{}{
-			esFilterField: params.FilterValue,
-		},
-	})
+	// Use appropriate query type based on field classification
+	var filterQuery map[string]interface{}
+	if fieldType, exists := logdata.FieldTypeMap[params.FilterField]; exists && fieldType == logdata.StringField {
+		if logdata.IsElasticsearchKeywordField(params.FilterField) {
+			// CommonLabels use term query with .keyword field
+			filterQuery = map[string]interface{}{
+				"term": map[string]interface{}{
+					esFilterField: params.FilterValue,
+				},
+			}
+		} else {
+			// Non-CommonLabels use match query with text field
+			filterQuery = map[string]interface{}{
+				"match": map[string]interface{}{
+					params.FilterField: params.FilterValue,
+				},
+			}
+		}
+	} else {
+		// Non-string fields use term query
+		filterQuery = map[string]interface{}{
+			"term": map[string]interface{}{
+				params.FilterField: params.FilterValue,
+			},
+		}
+	}
+	filters = append(filters, filterQuery)
 
 	// Add time window filter for fair comparison with Loki's required time windows
 	// This ensures all systems use same time scope for aggregations
@@ -703,11 +756,15 @@ func (e *ElasticsearchExecutor) generateAnalyticalQuery(baseQuery map[string]int
 	// Build aggregations based on unified parameters
 	aggregations := make(map[string]interface{})
 
-	// Prepare group by field for Elasticsearch (add .keyword for string fields)
+	// For Elasticsearch aggregations, use only CommonLabels (keyword fields)
+	// If the selected field is not a CommonLabel, pick a random CommonLabel instead
 	esGroupByField := params.GroupByField
-	if fieldType, exists := logdata.FieldTypeMap[params.GroupByField]; exists && fieldType == logdata.StringField {
-		esGroupByField += ".keyword"
+	if !logdata.IsElasticsearchKeywordField(params.GroupByField) {
+		// Replace with a random CommonLabel for Elasticsearch compatibility
+		commonLabels := logdata.GetElasticsearchKeywordFields()
+		esGroupByField = commonLabels[logdata.RandomIntn(len(commonLabels))]
 	}
+	esGroupByField += ".keyword"
 
 	switch params.AggregationType {
 	case "count":
@@ -816,10 +873,13 @@ func (e *ElasticsearchExecutor) generateTimeSeriesQuery(baseQuery map[string]int
 	params := logdata.GenerateUnifiedTimeSeriesQuery()
 
 	// Add base filter using unified parameters
-	// Prepare filter field for Elasticsearch (add .keyword for string fields)
+	// Prepare filter field for Elasticsearch - use keyword field only for CommonLabels
 	esFilterField := params.FilterField
 	if fieldType, exists := logdata.FieldTypeMap[params.FilterField]; exists && fieldType == logdata.StringField {
-		esFilterField += ".keyword"
+		if logdata.IsElasticsearchKeywordField(params.FilterField) {
+			esFilterField += ".keyword"
+		}
+		// For other string fields, use the field as-is (text type)
 	}
 
 	filters = append(filters, map[string]interface{}{
@@ -827,11 +887,15 @@ func (e *ElasticsearchExecutor) generateTimeSeriesQuery(baseQuery map[string]int
 	})
 
 	// Create time series aggregation using unified parameters
-	// Prepare group by field for Elasticsearch (add .keyword for string fields)
+	// For Elasticsearch aggregations, use only CommonLabels (keyword fields)
+	// If the selected field is not a CommonLabel, pick a random CommonLabel instead
 	esGroupByField := params.GroupByField
-	if fieldType, exists := logdata.FieldTypeMap[params.GroupByField]; exists && fieldType == logdata.StringField {
-		esGroupByField += ".keyword"
+	if !logdata.IsElasticsearchKeywordField(params.GroupByField) {
+		// Replace with a random CommonLabel for Elasticsearch compatibility
+		commonLabels := logdata.GetElasticsearchKeywordFields()
+		esGroupByField = commonLabels[logdata.RandomIntn(len(commonLabels))]
 	}
+	esGroupByField += ".keyword"
 
 	// Build aggregations based on unified aggregation type
 	var subAggregation map[string]interface{}
@@ -1078,19 +1142,26 @@ func (e *ElasticsearchExecutor) generateTopKQuery(baseQuery map[string]interface
 		k = limit
 	}
 
-	// Prepare field for Elasticsearch (add .keyword for string fields)
+	// For Elasticsearch aggregations, use only CommonLabels (keyword fields)
+	// If the selected field is not a CommonLabel, pick a random CommonLabel instead
 	esField := params.GroupByField
-	if fieldType, exists := logdata.FieldTypeMap[params.GroupByField]; exists && fieldType == logdata.StringField {
-		esField += ".keyword"
+	if !logdata.IsElasticsearchKeywordField(params.GroupByField) {
+		// Replace with a random CommonLabel for Elasticsearch compatibility
+		commonLabels := logdata.GetElasticsearchKeywordFields()
+		esField = commonLabels[logdata.RandomIntn(len(commonLabels))]
 	}
+	esField += ".keyword"
 
 	// Add base filter if specified in unified parameters
 	if params.HasBaseFilter {
-		// Prepare filter field for Elasticsearch
+		// Prepare filter field for Elasticsearch - use keyword field only for CommonLabels
 		esFilterField := params.FilterField
 		filterFieldType, filterFieldExists := logdata.FieldTypeMap[params.FilterField]
 		if filterFieldExists && filterFieldType == logdata.StringField {
-			esFilterField += ".keyword"
+			if logdata.IsElasticsearchKeywordField(params.FilterField) {
+				esFilterField += ".keyword"
+			}
+			// For other string fields, use the field as-is (text type)
 		}
 
 		// Check if this is a regex pattern on integer field (same logic as other query types)
@@ -1114,11 +1185,21 @@ func (e *ElasticsearchExecutor) generateTopKQuery(baseQuery map[string]interface
 				}
 			}
 		} else {
-			// Use term filter for string fields and exact matches
-			termFilter = map[string]interface{}{
-				"term": map[string]interface{}{
-					esFilterField: params.FilterValue,
-				},
+			// Use appropriate query type for string fields
+			if logdata.IsElasticsearchKeywordField(params.FilterField) {
+				// CommonLabels use term query with .keyword field
+				termFilter = map[string]interface{}{
+					"term": map[string]interface{}{
+						esFilterField: params.FilterValue,
+					},
+				}
+			} else {
+				// Non-CommonLabels use match query with text field
+				termFilter = map[string]interface{}{
+					"match": map[string]interface{}{
+						params.FilterField: params.FilterValue,
+					},
+				}
 			}
 		}
 		filters = append(filters, termFilter)
